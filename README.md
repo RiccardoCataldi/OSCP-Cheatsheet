@@ -1,8 +1,22 @@
 # OSCP Cheatsheet
 
-## Nmap
+## Table of Contents
 
-### Version Detection
+- [Scanning & Enumeration](#scanning--enumeration)
+  - [Nmap Basics](#nmap-basics)
+  - [Service Enumeration](#service-enumeration)
+    - [SMB](#smb)
+    - [NFS](#nfs)
+    - [FTP](#ftp)
+- [Privilege Escalation](#privilege-escalation)
+  - [Linux](#linux)
+    - [SUID Files](#suid-files)
+
+---
+
+## Scanning & Enumeration
+
+### Nmap Basics
 
 * **Version Detection Scan** - Probes open ports to determine service/version information
 
@@ -12,7 +26,9 @@ nmap -sV <target>
 
 * `-sV`: Enables version detection, which probes open ports to determine what service and version is running on them
 
-### SMB Enumeration
+### Service Enumeration
+
+#### SMB
 
 * **SMB Share and User Enumeration** - Enumerates SMB shares and users on a target system
 
@@ -57,7 +73,7 @@ smbget -R smb://<target>/<share>
 * `-R`: Recursive flag - downloads all files and subdirectories
 * `smb://<target>/<share>`: Specifies the target IP and share name (e.g., `smb://10.81.182.140/anonymous`)
 
-### NFS Enumeration
+#### NFS
 
 * **NFS Share Enumeration** - Enumerates NFS shares, lists contents, and shows filesystem statistics
 
@@ -94,7 +110,7 @@ umount /tmp/nfs_mount
 
 * `umount`: Unmounts a filesystem from the mount point
 
-### FTP Enumeration
+#### FTP
 
 * **FTP Connection with Netcat** - Connects to FTP server using netcat to interact with the service
 
@@ -140,9 +156,13 @@ nmap -p 21 --script=ftp-anon,ftp-bounce,ftp-syst <target>
 * `ftp-bounce.nse`: Checks for FTP bounce attack vulnerability
 * `ftp-syst.nse`: Retrieves system information from FTP server
 
+---
+
 ## Privilege Escalation
 
-### SUID Files
+### Linux
+
+#### SUID Files
 
 * **Find SUID Files** - Searches for files with SUID (Set User ID) bit set, which can be exploited for privilege escalation
 
