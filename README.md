@@ -139,3 +139,20 @@ nmap -p 21 --script=ftp-anon,ftp-bounce,ftp-syst <target>
 * `ftp-anon.nse`: Checks if anonymous FTP login is allowed
 * `ftp-bounce.nse`: Checks for FTP bounce attack vulnerability
 * `ftp-syst.nse`: Retrieves system information from FTP server
+
+## Privilege Escalation
+
+### SUID Files
+
+* **Find SUID Files** - Searches for files with SUID (Set User ID) bit set, which can be exploited for privilege escalation
+
+```bash
+find / -perm -u=s -type f 2>/dev/null
+```
+
+* `find /`: Searches from root directory
+* `-perm -u=s`: Finds files with SUID bit set (executes with owner's privileges)
+* `-type f`: Only searches for files (not directories)
+* `2>/dev/null`: Suppresses error messages (permission denied, etc.)
+* SUID files run with the privileges of the file owner, which can be exploited if the owner is root
+* Common exploitable SUID binaries: `find`, `nmap`, `vim`, `nano`, `less`, `more`, `cp`, `mv`, etc.
