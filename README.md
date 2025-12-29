@@ -11,6 +11,8 @@
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
     - [SUID Files](#suid-files)
+- [Password Cracking](#password-cracking)
+  - [John the Ripper](#john-the-ripper)
 
 ---
 
@@ -190,3 +192,22 @@ find / -type f -perm -04000 -ls 2>/dev/null
 * `2>/dev/null`: Suppresses error messages (permission denied, etc.)
 * Use this command to see detailed information about SUID files, including verifying that the nano text editor has the SUID bit set
 * More useful when you need detailed information about SUID files (permissions, ownership, size) to identify exploitable binaries
+
+---
+
+## Password Cracking
+
+### John the Ripper
+
+* **Crack Password Hash** - Cracks password hashes using John the Ripper with a wordlist
+
+```bash
+john --format=crypt --wordlist=rockyou.txt hash.txt
+```
+
+* `john`: John the Ripper password cracking tool
+* `--format=crypt`: Specifies the hash format (crypt format for traditional Unix password hashes)
+* `--wordlist=rockyou.txt`: Uses the rockyou.txt wordlist (commonly located in `/usr/share/wordlists/rockyou.txt`)
+* `hash.txt`: File containing the password hash(es) to crack
+* Common hash formats: `crypt` (Unix), `md5crypt`, `sha512crypt`, `NT` (Windows), `raw-md5`, `raw-sha1`, etc.
+* To identify hash format automatically, use: `john --format=auto hash.txt` or `hashid hash.txt`
