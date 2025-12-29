@@ -11,6 +11,7 @@
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
     - [SUID Files](#suid-files)
+    - [Linux Capabilities](#linux-capabilities)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
 
@@ -192,6 +193,22 @@ find / -type f -perm -04000 -ls 2>/dev/null
 * `2>/dev/null`: Suppresses error messages (permission denied, etc.)
 * Use this command to see detailed information about SUID files, including verifying that the nano text editor has the SUID bit set
 * More useful when you need detailed information about SUID files (permissions, ownership, size) to identify exploitable binaries
+
+#### Linux Capabilities
+
+* **Find Files with Capabilities** - Searches for files with Linux capabilities set, which can be exploited for privilege escalation
+
+```bash
+getcap -r / 2>/dev/null
+```
+
+* `getcap`: Command to display capabilities of files
+* `-r`: Recursive flag - searches recursively through directories
+* `/`: Starting directory (root directory)
+* `2>/dev/null`: Suppresses error messages (permission denied, etc.)
+* Linux capabilities provide fine-grained control over privileges, allowing specific capabilities without full root access
+* Files with dangerous capabilities (like `cap_setuid`, `cap_sys_admin`, `cap_dac_override`) can be exploited for privilege escalation
+* Common exploitable capabilities: `cap_setuid+ep` (can set UID), `cap_sys_admin+ep` (system administration), `cap_dac_override+ep` (bypass file permissions)
 
 ---
 
