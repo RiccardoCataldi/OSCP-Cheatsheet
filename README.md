@@ -176,3 +176,17 @@ find / -perm -u=s -type f 2>/dev/null
 * `2>/dev/null`: Suppresses error messages (permission denied, etc.)
 * SUID files run with the privileges of the file owner, which can be exploited if the owner is root
 * Common exploitable SUID binaries: `find`, `nmap`, `vim`, `nano`, `less`, `more`, `cp`, `mv`, etc.
+
+* **Find SUID Files (Detailed Listing)** - Searches for SUID files with detailed file information to verify specific binaries
+
+```bash
+find / -type f -perm -04000 -ls 2>/dev/null
+```
+
+* `find /`: Searches from root directory
+* `-type f`: Only searches for files (not directories)
+* `-perm -04000`: Finds files with SUID bit set using octal notation (04000 = SUID bit)
+* `-ls`: Provides detailed listing similar to `ls -l` (shows permissions, owner, size, timestamps, etc.)
+* `2>/dev/null`: Suppresses error messages (permission denied, etc.)
+* Use this command to see detailed information about SUID files, including verifying that the nano text editor has the SUID bit set
+* More useful when you need detailed information about SUID files (permissions, ownership, size) to identify exploitable binaries
