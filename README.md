@@ -14,6 +14,7 @@
   - [Linux](#linux)
     - [SUID Files](#suid-files)
     - [Linux Capabilities](#linux-capabilities)
+    - [Cron Jobs](#cron-jobs)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
 
@@ -232,6 +233,59 @@ getcap -r / 2>/dev/null
 * Linux capabilities provide fine-grained control over privileges, allowing specific capabilities without full root access
 * Files with dangerous capabilities (like `cap_setuid`, `cap_sys_admin`, `cap_dac_override`) can be exploited for privilege escalation
 * Common exploitable capabilities: `cap_setuid+ep` (can set UID), `cap_sys_admin+ep` (system administration), `cap_dac_override+ep` (bypass file permissions)
+
+#### Cron Jobs
+
+* **Check System Cron Jobs** - Views system-wide cron jobs that may run with elevated privileges
+
+```bash
+cat /etc/crontab
+```
+
+* `/etc/crontab`: System-wide crontab file that defines scheduled tasks
+* Cron jobs that run as root can be exploited if they execute scripts in writable directories
+* Look for cron jobs that run scripts you can modify or that run from directories you have write access to
+
+* **Check User Cron Jobs** - Views user-specific cron jobs
+
+```bash
+crontab -l
+```
+
+* `crontab -l`: Lists cron jobs for the current user
+* Check if any cron jobs run scripts you can modify
+
+* **Check All Cron Directories** - Checks common cron directories for scheduled tasks
+
+```bash
+ls -la /etc/cron* /var/spool/cron/crontabs/*
+```
+
+* `/etc/cron*`: System cron directories (`/etc/cron.d/`, `/etc/cron.daily/`, `/etc/cron.hourly/`, etc.)
+* `/var/spool/cron/crontabs/*`: User-specific crontab files
+* Look for scripts referenced in cron jobs that are writable or in writable directories
+
+* **Find Writable Cron Scripts** - Searches for writable scripts referenced in cron jobs
+
+```bash
+find /etc/cron* -type f -perm -0002 2>/dev/null
+```
+
+* `find /etc/cron*`: Searches in cron directories
+* `-type f`: Only searches for files
+* `-perm -0002`: Finds files with world-writable permissions (anyone can modify)
+* `2>/dev/null`: Suppresses error messages
+* If a cron job runs a world-writable script, you can modify it to execute commands as the cron job's user (often root)
+
+* **Check Cron Job Permissions** - Lists cron files with detailed permissions
+
+```bash
+ls -la /etc/cron* /var/spool/cron/crontabs/* 2>/dev/null
+```
+
+* Shows detailed file permissions, ownership, and timestamps
+* Helps identify which cron jobs run as root and which scripts they execute
+* Look for scripts in directories you have write access to (e.g., `/tmp`, `/var/tmp`, user home directories)
 
 ---
 
