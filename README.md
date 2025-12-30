@@ -15,6 +15,7 @@
     - [SUID Files](#suid-files)
     - [Linux Capabilities](#linux-capabilities)
     - [Cron Jobs](#cron-jobs)
+    - [Writable Directories](#writable-directories)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
 
@@ -286,6 +287,26 @@ ls -la /etc/cron* /var/spool/cron/crontabs/* 2>/dev/null
 * Shows detailed file permissions, ownership, and timestamps
 * Helps identify which cron jobs run as root and which scripts they execute
 * Look for scripts in directories you have write access to (e.g., `/tmp`, `/var/tmp`, user home directories)
+
+#### Writable Directories
+
+* **Find Writable Directories** - Searches for writable directories that may be exploitable for privilege escalation
+
+```bash
+find / -writable 2>/dev/null | cut -d "/" -f 2,3 | grep -v proc | sort -u
+```
+
+* `find / -writable`: Finds all writable files and directories starting from root
+* `2>/dev/null`: Suppresses error messages (permission denied, etc.)
+* `cut -d "/" -f 2,3`: Extracts the first two directory levels (e.g., `/tmp`, `/var/tmp`, `/home/user`)
+* `grep -v proc`: Excludes `/proc` directory (virtual filesystem, not useful for exploitation)
+* `sort -u`: Sorts and shows only unique directory paths
+* Writable directories can be exploited if:
+  * Cron jobs execute scripts from these directories
+  * PATH manipulation (placing malicious binaries in writable directories in PATH)
+  * Log file manipulation (if log files are in writable directories)
+  * Configuration file modification (if config files are writable)
+* Common writable directories: `/tmp`, `/var/tmp`, `/dev/shm`, user home directories, `/opt`, `/var/www`
 
 ---
 
