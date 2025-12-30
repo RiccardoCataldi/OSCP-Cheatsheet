@@ -308,6 +308,24 @@ find / -writable 2>/dev/null | cut -d "/" -f 2,3 | grep -v proc | sort -u
   * Configuration file modification (if config files are writable)
 * Common writable directories: `/tmp`, `/var/tmp`, `/dev/shm`, user home directories, `/opt`, `/var/www`
 
+* **PATH Manipulation** - Modifies the PATH environment variable to include a writable directory for privilege escalation
+
+```bash
+export PATH=/tmp:$PATH
+```
+
+* `export PATH=/tmp:$PATH`: Prepends `/tmp` to the beginning of the PATH environment variable
+* `/tmp`: Writable directory (can be any writable directory like `/var/tmp`, `/home/user`, etc.)
+* `:$PATH`: Appends the original PATH after the new directory
+* **Exploitation scenario**: If a SUID binary or cron job runs a command without an absolute path (e.g., `ls` instead of `/bin/ls`), it will search directories in PATH order
+* **Steps to exploit**:
+  1. Create a malicious binary with the same name as a command (e.g., `ls`, `cat`, `python`)
+  2. Place it in the writable directory (e.g., `/tmp/ls`)
+  3. Make it executable: `chmod +x /tmp/ls`
+  4. Export PATH: `export PATH=/tmp:$PATH`
+  5. When the SUID binary or cron job runs the command, it will execute your malicious binary with elevated privileges
+* **Check for exploitable binaries**: Look for SUID binaries or cron jobs that call commands without absolute paths
+
 ---
 
 ## Password Cracking
