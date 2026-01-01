@@ -18,6 +18,7 @@
     - [Writable Directories](#writable-directories)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
+  - [Unshadow](#unshadow)
 
 ---
 
@@ -344,3 +345,24 @@ john --format=crypt --wordlist=rockyou.txt hash.txt
 * `hash.txt`: File containing the password hash(es) to crack
 * Common hash formats: `crypt` (Unix), `md5crypt`, `sha512crypt`, `NT` (Windows), `raw-md5`, `raw-sha1`, etc.
 * To identify hash format automatically, use: `john --format=auto hash.txt` or `hashid hash.txt`
+
+### Unshadow
+
+* **Combine passwd and shadow files** - Combines `/etc/passwd` and `/etc/shadow` files into a format that John the Ripper can crack
+
+```bash
+unshadow /etc/passwd /etc/shadow > hashes.txt
+```
+
+* `unshadow`: Utility from the John the Ripper suite that combines passwd and shadow files
+* `/etc/passwd`: Contains user account information (username, UID, GID, home directory, shell)
+* `/etc/shadow`: Contains password hashes (only readable by root)
+* `> hashes.txt`: Outputs the combined file in a format John can crack
+* **Usage scenario**: After gaining root access, extract password hashes to crack user passwords
+* **Workflow**:
+  1. On target machine (as root): `cat /etc/passwd > passwd.txt` and `cat /etc/shadow > shadow.txt`
+  2. Transfer files to attacking machine
+  3. Run: `unshadow passwd.txt shadow.txt > unshadowed.txt`
+  4. Crack with John: `john --wordlist=rockyou.txt unshadowed.txt`
+* **Output format**: Combines username from `/etc/passwd` with hash from `/etc/shadow` (e.g., `username:$6$salt$hash:1001:1001:User Name:/home/username:/bin/bash`)
+* Useful for password reuse attacks and gaining access to other user accounts on the system
