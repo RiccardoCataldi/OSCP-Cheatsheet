@@ -19,12 +19,94 @@
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
   - [Unshadow](#unshadow)
+  - [Hydra](#hydra)
 
 ---
 
 ## Scanning & Enumeration
 
 ### Nmap Basics
+
+* **SYN Stealth Scan (Default)** - Fast and stealthy TCP port scan that doesn't complete the TCP handshake
+
+```bash
+nmap -sS <target>
+```
+
+* `-sS`: SYN scan (also called half-open scan) - sends SYN packets without completing the handshake
+* Default scan type when run as root/administrator
+* Fast and relatively stealthy (doesn't complete TCP connections)
+* Requires root/administrator privileges to craft raw packets
+* Most common scan type for initial reconnaissance
+
+* **TCP Connect Scan** - Completes full TCP handshake, works without root privileges
+
+```bash
+nmap -sT <target>
+```
+
+* `-sT`: TCP connect scan - completes full TCP three-way handshake
+* Default scan type when run as non-root user
+* Slower than SYN scan but doesn't require special privileges
+* More likely to be logged by target systems
+* Use when you don't have root access
+
+* **UDP Scan** - Scans UDP ports (slower than TCP scans)
+
+```bash
+nmap -sU <target>
+```
+
+* `-sU`: UDP port scan
+* Much slower than TCP scans (UDP is connectionless)
+* Often combined with TCP scan: `nmap -sS -sU <target>`
+* Common UDP ports: 53 (DNS), 67/68 (DHCP), 161 (SNMP), 123 (NTP)
+
+* **NULL Scan** - Sends packets with no flags set (stealth scan)
+
+```bash
+nmap -sN <target>
+```
+
+* `-sN`: NULL scan - sends packets with no TCP flags set
+* Stealth scan technique (may bypass some firewalls)
+* Requires root privileges
+* Works on systems that don't follow RFC 793 strictly
+
+* **FIN Scan** - Sends packets with only FIN flag set (stealth scan)
+
+```bash
+nmap -sF <target>
+```
+
+* `-sF`: FIN scan - sends packets with only FIN flag set
+* Stealth scan technique
+* Requires root privileges
+* Similar to NULL scan, may bypass some firewalls
+
+* **Xmas Scan** - Sends packets with FIN, PSH, and URG flags set (stealth scan)
+
+```bash
+nmap -sX <target>
+```
+
+* `-sX`: Xmas scan - sends packets with FIN, PSH, and URG flags set (like a Christmas tree)
+* Stealth scan technique
+* Requires root privileges
+* Named "Xmas" because the flags are "lit up" like a Christmas tree
+
+* **Comprehensive Scan** - Combines multiple scan types and options
+
+```bash
+nmap -sS -sV -sC -O -p- <target>
+```
+
+* `-sS`: SYN scan
+* `-sV`: Version detection
+* `-sC`: Run default NSE scripts
+* `-O`: OS detection
+* `-p-`: Scan all 65535 ports (default scans top 1000 ports)
+* Comprehensive scan for thorough enumeration
 
 * **Version Detection Scan** - Probes open ports to determine service/version information
 
@@ -346,6 +428,19 @@ john --format=crypt --wordlist=rockyou.txt hash.txt
 * Common hash formats: `crypt` (Unix), `md5crypt`, `sha512crypt`, `NT` (Windows), `raw-md5`, `raw-sha1`, etc.
 * To identify hash format automatically, use: `john --format=auto hash.txt` or `hashid hash.txt`
 
+* **Crack Windows NT Hashes** - Cracks Windows NT password hashes (from SAM database)
+
+```bash
+john --format=NT --wordlist=rockyou.txt hash.txt
+```
+
+* `--format=NT`: Specifies NT hash format (Windows NTLM/NT hashes)
+* `--wordlist=rockyou.txt`: Uses the rockyou.txt wordlist
+* `hash.txt`: File containing Windows NT hashes (typically extracted from Windows SAM database)
+* **Usage scenario**: After extracting Windows password hashes from SAM database or other Windows systems
+* Windows NT hashes are typically 32-character hexadecimal strings (MD4 hash of the password)
+* Can also use `--format=NT` for NTLM hashes (same format)
+
 ### Unshadow
 
 * **Combine passwd and shadow files** - Combines `/etc/passwd` and `/etc/shadow` files into a format that John the Ripper can crack
@@ -366,3 +461,25 @@ unshadow /etc/passwd /etc/shadow > hashes.txt
   4. Crack with John: `john --wordlist=rockyou.txt unshadowed.txt`
 * **Output format**: Combines username from `/etc/passwd` with hash from `/etc/shadow` (e.g., `username:$6$salt$hash:1001:1001:User Name:/home/username:/bin/bash`)
 * Useful for password reuse attacks and gaining access to other user accounts on the system
+
+### Hydra
+
+* **FTP Brute Force Attack** - Performs brute force attack against FTP service using a username and password wordlist
+
+```bash
+hydra -l eddie -P /usr/share/wordlists/rockyou.txt ftp://10.82.136.134:10021
+```
+
+* `hydra`: Parallelized login cracker that supports many protocols
+* `-l eddie`: Specifies a single username to test (use `-L users.txt` for a username list)
+* `-P /usr/share/wordlists/rockyou.txt`: Specifies password wordlist file (use `-p password` for single password)
+* `ftp://10.82.136.134:10021`: Target service URL (protocol://IP:PORT)
+* **Supported protocols**: `ftp`, `ssh`, `http`, `https`, `smb`, `rdp`, `telnet`, `mysql`, `postgresql`, `mssql`, `vnc`, `snmp`, `ldap`, etc.
+* **Common options**:
+  * `-t <threads>`: Number of parallel tasks (default: 16)
+  * `-V`: Verbose mode - shows each login attempt
+  * `-f`: Stop after first valid password found
+  * `-s <port>`: Specify port if non-standard
+* **Example with username list**: `hydra -L users.txt -P passwords.txt ftp://target`
+* **Example with SSH**: `hydra -l root -P rockyou.txt ssh://target`
+* **Example with HTTP POST**: `hydra -l admin -P rockyou.txt http-post-form://target/login.php:username=^USER^&password=^PASS^:F=incorrect`
