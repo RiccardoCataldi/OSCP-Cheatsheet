@@ -6,6 +6,7 @@
   - [Nmap Basics](#nmap-basics)
   - [Service Enumeration](#service-enumeration)
     - [SMB](#smb)
+    - [Active Directory](#active-directory)
     - [NFS](#nfs)
     - [FTP](#ftp)
 - [Reverse Shells](#reverse-shells)
@@ -162,6 +163,41 @@ smbget -R smb://<target>/<share>
 * `smbget`: Utility to download files from SMB shares
 * `-R`: Recursive flag - downloads all files and subdirectories
 * `smb://<target>/<share>`: Specifies the target IP and share name (e.g., `smb://10.81.182.140/anonymous`)
+
+* **SMB Brute Force with CrackMapExec** - Performs brute force attack against SMB service using username list and password
+
+```bash
+nxc smb 10.82.151.31 -d thm.corp -u users.txt -p 'ResetMe123!' --continue-on-success
+```
+
+* `nxc`: CrackMapExec (NetExec) - network security tool for penetration testing
+* `smb`: Target protocol (SMB/CIFS)
+* `10.82.151.31`: Target IP address
+* `-d thm.corp`: Domain name for authentication (optional - use when targeting domain-joined systems)
+* `-u users.txt`: Username wordlist file (use `-u username` for single user)
+* `-p 'ResetMe123!'`: Password to test (use `-P passwords.txt` for password wordlist)
+* `--continue-on-success`: Continue testing even after finding valid credentials
+* **Works with both**: Samba servers (Linux/Unix) and Windows SMB servers (standalone or Active Directory)
+* Useful for password spraying attacks and credential enumeration
+* Can also enumerate shares, sessions, and logged-in users with valid credentials
+
+#### Active Directory
+
+* **SID Enumeration with Impacket** - Enumerates Security Identifiers (SIDs) and users/groups on a Windows domain controller
+
+```bash
+lookupsid.py <domain>/<username>@<target>
+```
+
+* `lookupsid.py`: Impacket tool for SID enumeration via MS-RPC
+* `<domain>/<username>@<target>`: Authentication credentials and target (e.g., `thm.corp/guest@10.82.151.31`)
+* Requires valid domain credentials (often works with guest account or null session)
+* Enumerates domain SID and all users, groups, and aliases in the Active Directory domain
+* Output includes RID (Relative Identifier) and account type (SidTypeUser, SidTypeGroup, SidTypeAlias)
+* Useful for discovering all domain users and groups for further enumeration
+* Can reveal hidden or non-standard user accounts that might not appear in other enumeration methods
+* **Note**: This tool is specific to Active Directory/Windows Domain Controllers
+* Example: `lookupsid.py thm.corp/guest@10.82.151.31`
 
 #### NFS
 
