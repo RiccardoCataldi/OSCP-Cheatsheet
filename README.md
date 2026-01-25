@@ -9,6 +9,7 @@
     - [Active Directory](#active-directory)
     - [NFS](#nfs)
     - [FTP](#ftp)
+    - [Web/HTTP](#webhttp)
 - [Reverse Shells](#reverse-shells)
   - [Bash Reverse Shell](#bash-reverse-shell)
 - [Privilege Escalation](#privilege-escalation)
@@ -333,6 +334,33 @@ nmap -p 21 --script=ftp-anon,ftp-bounce,ftp-syst <target>
 * `ftp-anon.nse`: Checks if anonymous FTP login is allowed
 * `ftp-bounce.nse`: Checks for FTP bounce attack vulnerability
 * `ftp-syst.nse`: Retrieves system information from FTP server
+
+#### Web/HTTP
+
+* **Directory Brute Force with Gobuster** - Enumerates directories and files on a web server using wordlist
+
+```bash
+gobuster dir -u <http://target> -w /usr/share/wordlists/dirb/big.txt
+```
+
+* `gobuster`: Fast directory/file brute-forcing tool written in Go
+* `dir`: Directory/file brute-forcing mode (use `dns` for subdomain enumeration, `vhost` for virtual hosts)
+* `-u <http://target>`: Target URL (e.g., `http://10.201.64.95/`)
+* `-w /usr/share/wordlists/dirb/big.txt`: Wordlist file to use for brute-forcing
+* **Common wordlists**:
+  * `/usr/share/wordlists/dirb/big.txt` - Large wordlist (20k+ entries)
+  * `/usr/share/wordlists/dirb/common.txt` - Common directories (4k+ entries)
+  * `/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt` - Medium wordlist
+  * `/usr/share/wordlists/dirb/small.txt` - Small wordlist (900+ entries)
+* **Common options**:
+  * `-x <extensions>`: File extensions to search for (e.g., `-x php,txt,html,js`)
+  * `-t <threads>`: Number of concurrent threads (default: 10)
+  * `-k`: Skip SSL certificate verification (for HTTPS)
+  * `-s <status>`: Status codes to show (e.g., `-s 200,204,301,302,307,401,403`)
+  * `-q`: Quiet mode - minimal output
+  * `-o <file>`: Output results to file
+* Useful for discovering hidden directories, files, and web applications
+* Example: `gobuster dir -u http://10.201.64.95/ -w /usr/share/wordlists/dirb/big.txt -x php,txt,html`
 
 ---
 
