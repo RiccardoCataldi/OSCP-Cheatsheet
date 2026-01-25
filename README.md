@@ -252,6 +252,27 @@ Set-ADUser -Identity <username> -Enabled $true
 * **Note**: These commands must be run on a Domain Controller or a machine with RSAT (Remote Server Administration Tools) installed
 * Example: `Set-ADAccountPassword -Identity Darla_Winters -Reset -NewPassword (ConvertTo-SecureString 'Password123!' -AsPlainText -Force)`
 
+* **LDAP Anonymous Enumeration** - Enumerates Active Directory via LDAP using anonymous/null session
+
+```bash
+ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" > ldapsearch.txt
+```
+
+* `ldapsearch`: Command-line LDAP search utility
+* `-x`: Simple authentication (uses anonymous bind if no credentials provided)
+* `-H ldap://<target>`: LDAP server URI (e.g., `ldap://10.10.161.74`)
+* `-b "dc=<domain>,dc=<tld>"`: Base DN (Distinguished Name) for search (e.g., `"dc=thm,dc=local"`)
+* `> ldapsearch.txt`: Outputs results to a file for analysis
+* **LDAP (Lightweight Directory Access Protocol)**: Primary protocol used by Active Directory for directory queries
+* Enumerates users, groups, computers, organizational units, and other AD objects
+* **Works with anonymous access** when null session/anonymous LDAP binds are allowed
+* Output includes detailed information about all objects in the directory (usernames, groups, descriptions, etc.)
+* Useful for discovering domain structure, user accounts, group memberships, and service accounts
+* **Common base DNs**:
+  * Single domain: `"dc=thm,dc=local"`
+  * Subdomain: `"dc=subdomain,dc=thm,dc=local"`
+* Example: `ldapsearch -x -H ldap://10.10.161.74 -b "dc=thm,dc=local" > ldapsearch.txt`
+
 #### NFS
 
 * **NFS Share Enumeration** - Enumerates NFS shares, lists contents, and shows filesystem statistics
