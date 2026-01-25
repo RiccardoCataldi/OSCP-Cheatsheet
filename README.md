@@ -144,6 +144,19 @@ msf6 auxiliary(scanner/smb/smb_enumshares) > run
 * `set RHOSTS <target>`: Sets the target IP address or range
 * `run`: Executes the module to enumerate SMB shares
 
+* **SMB Share Enumeration** - Lists all available SMB shares on a target without authentication
+
+```bash
+smbclient -L //<target> -N
+```
+
+* `smbclient`: Command-line SMB/CIFS client for accessing SMB shares
+* `-L`: List flag - enumerates all available shares without connecting to a specific share
+* `//<target>`: Specifies the target IP address (e.g., `//10.82.151.31`)
+* `-N`: No password flag - attempts null session authentication (no password required)
+* Useful for initial enumeration to discover available shares before attempting to access them
+* Works when anonymous/null session access is enabled on the SMB server
+
 * **SMB Client Connection** - Connects to an SMB share using smbclient
 
 ```bash
