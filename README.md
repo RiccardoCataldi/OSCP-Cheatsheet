@@ -212,6 +212,24 @@ lookupsid.py <domain>/<username>@<target>
 * **Note**: This tool is specific to Active Directory/Windows Domain Controllers
 * Example: `lookupsid.py thm.corp/guest@10.82.151.31`
 
+* **AS-REP Roasting with Impacket** - Attempts to retrieve Kerberos AS-REP tickets for users who don't require pre-authentication
+
+```bash
+GetNPUsers.py <domain>/ -no-pass -usersfile <users.txt> -dc-ip <target>
+```
+
+* `GetNPUsers.py`: Impacket tool for AS-REP Roasting attack
+* `<domain>/`: Domain name (e.g., `thm.corp/`)
+* `-no-pass`: No password flag - uses null session/anonymous authentication
+* `-usersfile <users.txt>`: File containing list of usernames to test (one per line)
+* `-dc-ip <target>`: IP address of the Domain Controller
+* **AS-REP Roasting**: Attacks users with "Do not require Kerberos preauthentication" enabled
+* If a user has this option enabled, retrieves an AS-REP ticket containing an encrypted hash
+* The hash can be cracked offline using tools like `hashcat` or `john` to recover the password
+* **No credentials required** - works with anonymous/null session access
+* Output format: `$krb5asrep$23$username@DOMAIN:hash` (can be cracked with hashcat mode 18200 or john)
+* Example: `GetNPUsers.py thm.corp/ -no-pass -usersfile users.txt -dc-ip 10.82.151.31`
+
 #### NFS
 
 * **NFS Share Enumeration** - Enumerates NFS shares, lists contents, and shows filesystem statistics
