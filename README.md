@@ -230,6 +230,27 @@ GetNPUsers.py <domain>/ -no-pass -usersfile <users.txt> -dc-ip <target>
 * Output format: `$krb5asrep$23$username@DOMAIN:hash` (can be cracked with hashcat mode 18200 or john)
 * Example: `GetNPUsers.py thm.corp/ -no-pass -usersfile users.txt -dc-ip 10.82.151.31`
 
+* **Reset User Password and Enable Account (PowerShell)** - Resets a user's password and enables their account in Active Directory
+
+```powershell
+Set-ADAccountPassword -Identity <username> -Reset -NewPassword (ConvertTo-SecureString '<password>' -AsPlainText -Force)
+Set-ADUser -Identity <username> -Enabled $true
+```
+
+* `Set-ADAccountPassword`: PowerShell cmdlet to reset a user's password in Active Directory
+* `-Identity <username>`: Username of the account to modify (e.g., `Darla_Winters`)
+* `-Reset`: Resets the password (forces password change)
+* `-NewPassword (ConvertTo-SecureString ...)`: Sets the new password (must be converted to SecureString)
+* `-AsPlainText -Force`: Allows plaintext password input (required for ConvertTo-SecureString)
+* `Set-ADUser -Identity <username> -Enabled $true`: Enables a disabled user account
+* **Requires**: Domain Admin privileges or Account Operator permissions
+* **Use cases**:
+  * Post-exploitation: After gaining Domain Admin access, reset passwords to maintain persistence
+  * Privilege escalation: Enable disabled accounts or reset passwords of accounts you've compromised
+  * Lateral movement: Reset passwords of other user accounts to expand access
+* **Note**: These commands must be run on a Domain Controller or a machine with RSAT (Remote Server Administration Tools) installed
+* Example: `Set-ADAccountPassword -Identity Darla_Winters -Reset -NewPassword (ConvertTo-SecureString 'Password123!' -AsPlainText -Force)`
+
 #### NFS
 
 * **NFS Share Enumeration** - Enumerates NFS shares, lists contents, and shows filesystem statistics
