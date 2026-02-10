@@ -120,6 +120,20 @@ nmap -sV <target>
 
 * `-sV`: Enables version detection, which probes open ports to determine what service and version is running on them
 
+* **Ping Sweep (Network Discovery)** - Discovers live hosts on a network without port scanning
+
+```bash
+sudo nmap -sn ip/24
+```
+
+* `-sn`: Ping scan (skip port scan) - only checks if hosts are up, doesn't scan ports
+* `ip/24`: Network range in CIDR notation (e.g., `10.10.10.0/24` scans 10.10.10.1-254)
+* Requires root/administrator privileges (`sudo`) for ICMP ping and ARP requests
+* Fast network discovery technique to identify active hosts before port scanning
+* Uses ICMP echo requests, TCP SYN to port 443, TCP ACK to port 80, and ARP requests
+* Useful for initial reconnaissance to map out the network topology
+* Example: `sudo nmap -sn 10.10.10.0/24` scans all hosts in the 10.10.10.0/24 subnet
+
 ### Service Enumeration
 
 #### SMB
