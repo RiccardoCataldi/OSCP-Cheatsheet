@@ -765,6 +765,18 @@ john --format=NT --wordlist=rockyou.txt hash.txt
 * Windows NT hashes are typically 32-character hexadecimal strings (MD4 hash of the password)
 * Can also use `--format=NT` for NTLM hashes (same format)
 
+### Hashcat
+
+* **Crack Raw MD5 Hash (Wordlist Attack)** - Cracks a raw MD5 hash using a dictionary
+
+```bash
+hashcat -a 0 -m 0 F806FC5A2A0D5BA2471600758452799C /usr/share/wordlists/rockyou.txt --show
+```
+
+* `-a 0`: Straight attack mode (wordlist)
+* `-m 0`: Raw MD5 hash mode
+* `--show`: Displays cracked result(s) from hashcat potfile
+
 ### Unshadow
 
 * **Combine passwd and shadow files** - Combines `/etc/passwd` and `/etc/shadow` files into a format that John the Ripper can crack
