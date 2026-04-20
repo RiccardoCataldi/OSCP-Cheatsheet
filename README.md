@@ -399,6 +399,16 @@ gobuster dir -u <http://target> -w /usr/share/wordlists/dirb/big.txt
 * Useful for discovering hidden directories, files, and web applications
 * Example: `gobuster dir -u http://10.201.64.95/ -w /usr/share/wordlists/dirb/big.txt -x php,txt,html`
 
+* **Start Python HTTP Server** - Serves files from the current directory over HTTP
+
+```bash
+python3 -m http.server 8000
+```
+
+* `python3 -m http.server 8000`: Starts a simple web server on port 8000
+* Serves the current directory contents over HTTP
+* Access from browser or tools at: `http://<attacker-ip>:8000`
+
 ---
 
 ## Reverse Shells
