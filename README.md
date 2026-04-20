@@ -29,6 +29,7 @@
     - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
+  - [Hashcat](#hashcat)
   - [Unshadow](#unshadow)
   - [Hydra](#hydra)
 
