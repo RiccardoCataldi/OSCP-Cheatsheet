@@ -357,6 +357,26 @@ ftp <target>
 * `<target>`: Target IP address (e.g., `10.81.182.140`)
 * Common FTP commands: `ls`, `cd <directory>`, `get <file>`, `put <file>`, `binary`, `ascii`, `passive`, `quit`
 
+* **General FTP Client Commands** - Common interactive commands for enumeration and file transfer
+
+```bash
+ftp <target>
+# Name: <username>
+# Password: <password>
+ls
+cd <directory>
+get <file>
+put <file>
+binary
+passive
+bye
+```
+
+* Use `ls` to list directories and `cd <directory>` to move through remote paths
+* Use `get <file>` to download and `put <file>` to upload
+* Use `binary` for non-text files and `passive` when active mode data connections fail
+* Use `bye` or `quit` to close the session cleanly
+
 * **FTP Anonymous Login** - Attempts anonymous login to FTP server
 
 ```bash
