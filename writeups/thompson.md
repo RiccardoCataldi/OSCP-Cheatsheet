@@ -3,22 +3,22 @@
 ### Info
 - IP Target: 10.114.167.33
 - Attacker IP: 192.168.204.33
-- Difficoltà: Easy
+- Difficulty: Easy
 - OS: Linux (Ubuntu)
 
 ### Enumeration
-- Porte aperte: 22 (SSH), 8009 (AJP), 8080 (Tomcat 8.5.5)
+- Open ports: 22 (SSH), 8009 (AJP), 8080 (Tomcat 8.5.5)
 - Tool: nmap -sC -sV
 
 ### Foothold
-- Navigato su http://10.114.167.33:8080/manager/html
-- Pagina 401 Unauthorized rivela credenziali nel messaggio di errore:
+- Browsed to http://10.114.167.33:8080/manager/html
+- The 401 Unauthorized page reveals credentials in the error message:
   username="tomcat" password="s3cret"
-- Accesso al Tomcat Manager con tomcat:s3cret
-- Deploy WAR reverse shell → shell come utente tomcat
+- Accessed Tomcat Manager with tomcat:s3cret
+- Deployed WAR reverse shell -> shell as user tomcat
 
 ### Privilege Escalation
-- Trovato /home/jack/id.sh writable
-- Cron job esegue id.sh come root
-- Overwrite con bash reverse shell
-- Shell come root
+- Found `/home/jack/id.sh` writable
+- Cron job runs `id.sh` as root
+- Overwrote it with a bash reverse shell
+- Root shell

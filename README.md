@@ -29,6 +29,7 @@
     - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
+  - [Hashcat](#hashcat)
   - [Unshadow](#unshadow)
   - [Hydra](#hydra)
 
@@ -356,6 +357,26 @@ ftp <target>
 * `<target>`: Target IP address (e.g., `10.81.182.140`)
 * Common FTP commands: `ls`, `cd <directory>`, `get <file>`, `put <file>`, `binary`, `ascii`, `passive`, `quit`
 
+* **General FTP Client Commands** - Common interactive commands for enumeration and file transfer
+
+```bash
+ftp <target>
+# Name: <username>
+# Password: <password>
+ls
+cd <directory>
+get <file>
+put <file>
+binary
+passive
+bye
+```
+
+* Use `ls` to list directories and `cd <directory>` to move through remote paths
+* Use `get <file>` to download and `put <file>` to upload
+* Use `binary` for non-text files and `passive` when active mode data connections fail
+* Use `bye` or `quit` to close the session cleanly
+
 * **FTP Anonymous Login** - Attempts anonymous login to FTP server
 
 ```bash
@@ -405,6 +426,16 @@ gobuster dir -u <http://target> -w /usr/share/wordlists/dirb/big.txt
   * `-o <file>`: Output results to file
 * Useful for discovering hidden directories, files, and web applications
 * Example: `gobuster dir -u http://10.201.64.95/ -w /usr/share/wordlists/dirb/big.txt -x php,txt,html`
+
+* **Start Python HTTP Server** - Serves files from the current directory over HTTP
+
+```bash
+python3 -m http.server 8000
+```
+
+* `python3 -m http.server 8000`: Starts a simple web server on port 8000
+* Serves the current directory contents over HTTP
+* Access from browser or tools at: `http://<attacker-ip>:8000`
 
 ---
 
@@ -754,6 +785,18 @@ john --format=NT --wordlist=rockyou.txt hash.txt
 * **Usage scenario**: After extracting Windows password hashes from SAM database or other Windows systems
 * Windows NT hashes are typically 32-character hexadecimal strings (MD4 hash of the password)
 * Can also use `--format=NT` for NTLM hashes (same format)
+
+### Hashcat
+
+* **Crack Raw MD5 Hash (Wordlist Attack)** - Cracks a raw MD5 hash using a dictionary
+
+```bash
+hashcat -a 0 -m 0 F806FC5A2A0D5BA2471600758452799C /usr/share/wordlists/rockyou.txt --show
+```
+
+* `-a 0`: Straight attack mode (wordlist)
+* `-m 0`: Raw MD5 hash mode
+* `--show`: Displays cracked result(s) from hashcat potfile
 
 ### Unshadow
 
