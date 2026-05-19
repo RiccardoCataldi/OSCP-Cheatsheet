@@ -26,6 +26,7 @@
     - [Cron Jobs](#cron-jobs)
     - [Overwrite Writable Cron Script](#overwrite-writable-cron-script)
     - [Writable Directories](#writable-directories)
+    - [Docker](#docker)
   - [Windows](#windows)
     - [PowerUp.ps1](#powerupps1)
     - [Interpreting PowerUp Output](#interpreting-powerup-output)
@@ -774,6 +775,19 @@ export PATH=/tmp:$PATH
   4. Export PATH: `export PATH=/tmp:$PATH`
   5. When the SUID binary or cron job runs the command, it will execute your malicious binary with elevated privileges
 * **Check for exploitable binaries**: Look for SUID binaries or cron jobs that call commands without absolute paths
+
+#### Docker
+
+* **Escape to host via Docker** - If you can run Docker (e.g. member of the `docker` group), mount the host root filesystem and chroot into it for a root shell on the host
+
+```bash
+docker run -it --rm -v /:/mnt alpine chroot /mnt /bin/bash
+```
+
+* `-v /:/mnt`: Mounts the host `/` at `/mnt` inside the container
+* `alpine`: Minimal image (any image with `chroot` works)
+* `chroot /mnt /bin/bash`: Switches into the host filesystem namespace with a root shell
+* **Prerequisite**: `docker` group membership or ability to run Docker without restrictions (`groups`, `id`)
 
 ### Windows
 
