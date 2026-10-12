@@ -208,6 +208,17 @@ smbclient -L //<target> -N
 * Useful for initial enumeration to discover available shares before attempting to access them
 * Works when anonymous/null session access is enabled on the SMB server
 
+* **SMB Share Enumeration via Guest** - Fallback when null session authenticates but share listing is denied
+
+```bash
+nxc smb <target> -u 'guest' -p '' --shares
+```
+
+* Use this when `nxc smb <target> -u '' -p '' --shares` reports `STATUS_ACCESS_DENIED` even though the null login succeeds (`Null Auth:True`)
+* The server accepts the null/guest session but restricts anonymous share enumeration; authenticating as the built-in `guest` account (empty password) often unlocks the listing
+* Alternatives: `smbclient -N -L //<target>/`, or a bogus user with an empty password (`nxc smb <target> -u 'a' -p '' --shares`)
+* Seen on Windows Server DCs (e.g. HTB Timelapse) where `--shares` as a pure null session fails but guest works
+
 * **SMB Client Connection** - Connects to an SMB share using smbclient
 
 ```bash
