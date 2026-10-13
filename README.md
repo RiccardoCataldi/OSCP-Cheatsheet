@@ -35,6 +35,8 @@
     - [Writable Directories](#writable-directories)
     - [Docker](#docker)
   - [Windows](#windows)
+    - [Local & Domain User/Group Enumeration](#local--domain-usergroup-enumeration)
+    - [Finding Flags on Windows](#finding-flags-on-windows)
     - [PowerUp.ps1](#powerupps1)
     - [Interpreting PowerUp Output](#interpreting-powerup-output)
     - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
@@ -1259,6 +1261,86 @@ docker run -it --rm -v /:/mnt alpine chroot /mnt /bin/bash
 * **Prerequisite**: `docker` group membership or ability to run Docker without restrictions (`groups`, `id`)
 
 ### Windows
+
+#### Local & Domain User/Group Enumeration
+
+First thing after landing a Windows shell: find out who you are and what groups you are in. Group membership (local *and* domain) is often the whole privesc — `LAPS_Readers`, `Backup Operators`, `Remote Management Users`, `DnsAdmins`, etc.
+
+* **Who am I / my privileges & groups** - identity, token privileges, and group SIDs of the current user
+
+```powershell
+whoami
+whoami /priv          # token privileges (SeImpersonate, SeBackup, SeRestore, ...)
+whoami /groups        # every group the token carries, local and domain
+whoami /all
+```
+
+* `whoami /priv` exposes privileges that lead straight to SYSTEM (`SeImpersonatePrivilege` -> Potato attacks; `SeBackupPrivilege` -> read any file).
+* `whoami /groups` shows domain groups too - spot non-default groups (`LAPS_Readers`, `Azure Admins`) that hint at the intended path.
+
+* **Local users and groups** - accounts and local group membership on this machine
+
+```powershell
+net user                         # list local users
+net user <username>              # detail for one user (incl. group memberships)
+net localgroup                   # list local groups
+net localgroup Administrators    # members of a local group
+```
+
+* `net user <username>` prints both **Local Group** and **Global Group** memberships in one view - the quickest way to see a service account is in something like `LAPS_Readers`.
+
+* **Domain users and groups** - enumerate the domain (works from a domain-joined host)
+
+```powershell
+net user /domain                 # all domain users
+net user <username> /domain      # detail for a domain user
+net group /domain                # all domain groups
+net group "Domain Admins" /domain
+net group "LAPS_Readers" /domain # who can read LAPS passwords
+```
+
+* **PowerShell AD module equivalents** (when RSAT/AD module is present)
+
+```powershell
+Get-ADUser -Filter * -Properties *
+Get-ADGroup -Filter *
+Get-ADGroupMember "LAPS_Readers"
+Get-ADComputer DC01 -Properties ms-Mcs-AdmPwd   # read a LAPS password directly if authorized
+```
+
+* **From Kali with credentials** (no shell needed) - NetExec enumerates groups over the wire
+
+```bash
+nxc ldap <DC_IP> -u <user> -p '<pass>' --groups
+nxc ldap <DC_IP> -u <user> -p '<pass>' -M groupmembership -o USER=<user>
+nxc ldap <DC_IP> -u <user> -p '<pass>' -M laps        # read LAPS if user is in LAPS_Readers
+```
+
+#### Finding Flags on Windows
+
+Flags are not always on the current user's desktop (e.g. HTB Timelapse keeps `root.txt` under `C:\Users\TRX\Desktop\`). As a privileged user, search for them.
+
+* **Search all user desktops / whole drive** - recursively locate `user.txt` / `root.txt`
+
+```powershell
+# All user profiles (fast, targeted)
+Get-ChildItem C:\Users\ -Recurse -Filter root.txt -ErrorAction SilentlyContinue |
+  ForEach-Object { $_.FullName; Get-Content $_.FullName }
+
+# Both flags, anywhere on C:\ (slower, exhaustive)
+Get-ChildItem C:\ -Recurse -Include user.txt,root.txt -ErrorAction SilentlyContinue |
+  Select-Object FullName
+```
+
+* **cmd.exe equivalent** - when PowerShell is unavailable
+
+```cmd
+dir C:\Users\*.txt /s /b 2>nul
+where /r C:\Users root.txt
+```
+
+* `-ErrorAction SilentlyContinue` / `2>nul` suppresses the access-denied noise from folders you can't read.
+* Start with `C:\Users\` (quick win), fall back to a full `C:\` sweep only if nothing turns up.
 
 #### PowerUp.ps1
 
