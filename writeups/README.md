@@ -10,6 +10,7 @@ Box writeups, organized by platform (following the
 | [Timelapse](hackthebox/timelapse.md) | Windows (DC) | Easy | Guest SMB enum, encrypted ZIP/PFX cracking, cert-based WinRM, PS history, LAPS |
 | [Sauna](hackthebox/sauna.md) | Windows (DC) | Easy | AS-REP roasting, WinRM, autologon creds, DCSync, Pass-the-Hash |
 | [Monteverde](hackthebox/monteverde.md) | Windows (DC) | Medium | Null session enum, user-as-password spray, Azure AD Connect creds |
+| [Return](hackthebox/return.md) | Windows (DC) | Easy | Printer panel rogue-LDAP creds, WinRM, Server Operators service abuse |
 
 ## TryHackMe
 

