@@ -754,13 +754,61 @@ lookupsid.py <domain>/<username>@<target>
 
 #### LDAP Enumeration
 
+* **Anonymous LDAP Dump** - Dumps the whole directory over an anonymous bind, to a file to read offline
+
 ```bash
 ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" > ldapsearch.txt
 ```
 
-* `-x`: Simple bind (anonymous if allowed)
-* `-b`: Base DN (e.g. `"dc=thm,dc=local"`)
+* `-x`: Simple bind - with no `-D`/`-w` this is an **anonymous** bind
+* `-H ldap://<target>`: LDAP URI of the DC (port 389)
+* `-b`: Base DN, derived mechanically from the domain (`cascade.local` -> `"dc=cascade,dc=local"`)
 * Dumps users, groups, computers, OUs when null/anonymous LDAP bind works
+* **Rule of thumb**: if a null SMB session works (`enum4linux`), the anonymous LDAP bind usually works too - and LDAP shows *every* attribute, not just the standard SAM fields enum4linux prints
+* Always dump to a file and **read it first** before filtering - you find the interesting attribute by noticing it in the raw dump, not by guessing its name
+
+* **Filter to User Objects + Grep for Secrets** - Narrow the dump to users and surface password-ish attributes
+
+```bash
+ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" -s sub "(objectClass=user)" | grep -i "pwd\|pass\|legacy\|cred\|secret"
+```
+
+* `-s sub`: Subtree scope - recurse the whole tree under the base DN (alternatives: `base` = the node itself, `one` = one level down)
+* `"(objectClass=user)"`: LDAP filter - return only user objects (syntax is always `(attribute=value)`)
+* The `grep` is **post-filtering**, done *after* reading the raw dump once and spotting an odd attribute - it's not how you discover the attribute
+* On HTB **Cascade**, this surfaces a non-standard `cascadeLegacyPwd` attribute on `r.thompson` holding a Base64 password - full chain in [writeups/hackthebox/cascade.md](writeups/hackthebox/cascade.md)
+
+* **Target a Specific Attribute (Present Filter)** - Once you know the attribute name, pull only objects that have it
+
+```bash
+ldapsearch -x -H ldap://<target> -b "dc=<domain>,dc=<tld>" "(cascadeLegacyPwd=*)" cascadeLegacyPwd sAMAccountName
+```
+
+* `(<attribute>=*)`: The `=*` means "attribute **exists**" - returns only objects carrying it, skipping all the noise
+* Trailing attribute names (`cascadeLegacyPwd sAMAccountName`): request only those attributes in the output
+* Cleaner than dump-and-grep once you've identified the target attribute from an earlier raw dump
+* Any **non-standard attribute** (not `sAMAccountName`/`memberOf`/`pwdLastSet`/etc.) is worth this treatment - a custom schema field usually holds something that was put there on purpose
+
+* **Decode a Base64 Attribute Value** - Stored directory values in password fields are often Base64, not a hash
+
+```bash
+echo "clk0bjVldmE=" | base64 -d
+```
+
+* A `=`-padded string in a password-ish attribute is almost always Base64 - decode it before assuming it's a hash
+* Base64 is **encoding, not encryption**: `base64 -d` gives back the cleartext directly
+
+* **NetExec LDAP - User Description Module** - Pulls `description` fields across all users, where admins sometimes leave passwords
+
+```bash
+nxc ldap <target> -u '' -p '' -M user-desc
+```
+
+* `ldap`: NetExec LDAP protocol (works with a null/anonymous bind here, same as `ldapsearch -x`)
+* `-M user-desc`: Module that collects non-empty user `description` attributes and saves them to `~/.nxc/UserDesc-<host>-<timestamp>.log`
+* Output is written to the log file, **not** the terminal - `cat` the saved path to read it
+* **Scope caveat**: this module only reads the standard `description` field - it will **not** catch a custom attribute like `cascadeLegacyPwd`. For custom/legacy attributes you still need the raw `ldapsearch` dump above
+* List all LDAP modules with `nxc ldap -L`; `-M get-desc-users` is a related one
 
 ---
 

